@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListSet;
 
+import org.kurento.client.GenericMediaEvent;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import io.openvidu.java.client.Recording.Status;
-import io.openvidu.server.config.OpenviduConfig;
 import io.openvidu.server.core.EndReason;
 import io.openvidu.server.core.MediaOptions;
 import io.openvidu.server.core.Participant;
@@ -52,6 +52,7 @@ import io.openvidu.server.webhook.CDRLoggerWebhook;
  * - 'recordingStarted'				{sessionId, timestamp, id, name, hasAudio, hasVideo, resolution, recordingLayout, size}
  * - 'recordingStopped'				{sessionId, timestamp, id, name, hasAudio, hasVideo, resolution, recordingLayout, size}
  * - 'recordingStatusChanged'		{sessionId, timestamp, id, name, hasAudio, hasVideo, resolution, recordingLayout, size, status}
+ * - 'filterEventDispatched'		{sessionId, timestamp, participantId, streamId, filterType, eventType, data}
  * 
  * PROPERTIES VALUES:
  * 
@@ -64,7 +65,7 @@ import io.openvidu.server.webhook.CDRLoggerWebhook;
  * - receivingFrom: 	string
  * - audioEnabled: 		boolean
  * - videoEnabled: 		boolean
- * - videoSource: 		"CAMERA", "SCREEN"
+ * - videoSource: 		"CAMERA", "SCREEN", "CUSTOM", "IPCAM"
  * - videoFramerate:	number
  * - videoDimensions:	string
  * - id:				string
@@ -91,10 +92,7 @@ import io.openvidu.server.webhook.CDRLoggerWebhook;
 public class CallDetailRecord {
 
 	@Autowired
-	protected SessionManager sessionManager;
-
-	@Autowired
-	protected OpenviduConfig openviduConfig;
+	private SessionManager sessionManager;
 
 	private Collection<CDRLogger> loggers;
 
@@ -132,7 +130,7 @@ public class CallDetailRecord {
 	}
 
 	public void recordParticipantJoined(Participant participant, String sessionId) {
-		CDREventParticipant e = new CDREventParticipant(sessionId, participant);
+		CDREventParticipant e = new CDREventParticipant(participant);
 		this.participants.put(participant.getParticipantPublicId(), e);
 		this.log(e);
 	}
@@ -219,7 +217,12 @@ public class CallDetailRecord {
 		this.log(new CDREventRecordingStatus(recording, recording.getCreatedAt(), finalReason, timestamp, status));
 	}
 
-	private void log(CDREvent event) {
+	public void recordFilterEventDispatched(String sessionId, String participantId, String streamId, String filterType,
+			GenericMediaEvent event) {
+		this.log(new CDREventFilterEvent(sessionId, participantId, streamId, filterType, event));
+	}
+
+	protected void log(CDREvent event) {
 		this.loggers.forEach(logger -> {
 
 			// TEMP FIX: AVOID SENDING recordingStarted AND recordingStopped EVENTS TO

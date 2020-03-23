@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package io.openvidu.server.core;
 
 import com.google.gson.JsonObject;
 
+import io.openvidu.server.kurento.endpoint.EndpointType;
 import io.openvidu.server.utils.GeoLocation;
 
 public class Participant {
@@ -33,14 +34,16 @@ public class Participant {
 	protected Token token; // Token associated to this participant
 	protected GeoLocation location; // Location of the participant
 	protected String platform; // Platform used by the participant to connect to the session
+	protected EndpointType endpointType; // Type of participant (web participant, IP cam participant...)
 
 	protected boolean streaming = false;
-	protected volatile boolean closed;
+	protected volatile boolean closed = false;
 
 	private final String METADATA_SEPARATOR = "%/%";
 
 	public Participant(String finalUserId, String participantPrivatetId, String participantPublicId, String sessionId,
-			Token token, String clientMetadata, GeoLocation location, String platform, Long createdAt) {
+			Token token, String clientMetadata, GeoLocation location, String platform, EndpointType endpointType,
+			Long createdAt) {
 		this.finalUserId = finalUserId;
 		this.participantPrivatetId = participantPrivatetId;
 		this.participantPublicId = participantPublicId;
@@ -51,11 +54,15 @@ public class Participant {
 			this.createdAt = System.currentTimeMillis();
 		}
 		this.token = token;
-		this.clientMetadata = clientMetadata;
-		if (!token.getServerMetadata().isEmpty())
+		if (clientMetadata != null) {
+			this.clientMetadata = clientMetadata;
+		}
+		if (!token.getServerMetadata().isEmpty()) {
 			this.serverMetadata = token.getServerMetadata();
+		}
 		this.location = location;
 		this.platform = platform;
+		this.endpointType = endpointType;
 	}
 
 	public String getFinalUserId() {
@@ -126,6 +133,10 @@ public class Participant {
 		this.platform = platform;
 	}
 
+	public EndpointType getEndpointType() {
+		return this.endpointType;
+	}
+
 	public boolean isStreaming() {
 		return streaming;
 	}
@@ -134,8 +145,8 @@ public class Participant {
 		return closed;
 	}
 
-	public void setStreaming(boolean streaming) {
-		this.streaming = streaming;
+	public boolean isIpcam() {
+		return this.platform.equals("IPCAM") && this.participantPrivatetId.startsWith(IdentifierPrefixes.IPCAM_ID);
 	}
 
 	public String getPublisherStreamId() {
@@ -150,6 +161,11 @@ public class Participant {
 			fullMetadata = this.clientMetadata + this.serverMetadata;
 		}
 		return fullMetadata;
+	}
+
+	public void deleteIpcamProperties() {
+		this.clientMetadata = "";
+		this.token.setToken(null);
 	}
 
 	@Override
@@ -214,7 +230,9 @@ public class Participant {
 		json.addProperty("createdAt", this.createdAt);
 		json.addProperty("location", this.location != null ? this.location.toString() : "unknown");
 		json.addProperty("platform", this.platform);
-		json.addProperty("token", this.token.getToken());
+		if (this.token.getToken() != null) {
+			json.addProperty("token", this.token.getToken());
+		}
 		json.addProperty("role", this.token.getRole().name());
 		json.addProperty("serverData", this.serverMetadata);
 		json.addProperty("clientData", this.clientMetadata);

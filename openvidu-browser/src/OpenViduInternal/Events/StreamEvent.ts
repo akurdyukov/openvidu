@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,8 +23,8 @@ import { Stream } from '../../OpenVidu/Stream';
 
 /**
  * Defines the following events:
- * - `streamCreated`: dispatched by [[Session]] and [[Publisher]]
- * - `streamDestroyed`: dispatched by [[Session]] and [[Publisher]]
+ * - `streamCreated`: dispatched by [[Session]] and [[Publisher]] after some user has started publishing to the session
+ * - `streamDestroyed`: dispatched by [[Session]] and [[Publisher]] after some user has stopped publishing to the session
  */
 export class StreamEvent extends Event {
 
@@ -43,7 +43,7 @@ export class StreamEvent extends Event {
      * - "forceDisconnectByServer": the user has been evicted from the Session by the application
      * - "sessionClosedByServer": the Session has been closed by the application
      * - "networkDisconnect": the user's network connection has dropped
-     * - "mediaServerDisconnect": OpenVidu Media Server has crashed or lost its connection. A new media server instance is active and no media streams are available in the media server
+     * - "mediaServerDisconnect": OpenVidu Media Node has crashed or lost its connection. A new Media Node instance is active and no media streams are available in the Media Node
      *
      * For 'streamCreated' empty string
      */

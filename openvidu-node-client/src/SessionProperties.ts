@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ import { RecordingMode } from './RecordingMode';
 export interface SessionProperties {
 
     /**
-     * How the media streams will be sent and received by your clients: routed through OpenVidu Media Server
+     * How the media streams will be sent and received by your clients: routed through OpenVidu Media Node
      * (`MediaMode.ROUTED`) or attempting direct p2p connections (`MediaMode.RELAYED`, _not available yet_)
      */
     mediaMode?: MediaMode;

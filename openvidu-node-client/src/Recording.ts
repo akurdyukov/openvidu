@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -49,7 +49,7 @@ export class Recording {
     duration = 0;
 
     /**
-     * URL of the recording. You can access the file from there. It is `null` until recording is stopped or if OpenVidu Server configuration property `openvidu.recording.public-access` is false
+     * URL of the recording. You can access the file from there. It is `null` until recording reaches "ready" or "failed" status. If OpenVidu Server configuration property `openvidu.recording.public-access` is false, this path will be secured with OpenVidu credentials
      */
     url: string;
 

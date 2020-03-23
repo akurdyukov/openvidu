@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,7 +47,24 @@ import log = require('loglevel');
 /**
  * Represents a video call. It can also be seen as a videoconference room where multiple users can connect.
  * Participants who publish their videos to a session can be seen by the rest of users connected to that specific session.
- * Initialized with [[OpenVidu.initSession]] method
+ * Initialized with [[OpenVidu.initSession]] method.
+ * 
+ * ### Available event listeners (and events dispatched)
+ * 
+ * - connectionCreated ([[ConnectionEvent]])
+ * - connectionDestroyed ([[ConnectionEvent]])
+ * - sessionDisconnected ([[SessionDisconnectedEvent]])
+ * - streamCreated ([[StreamEvent]])
+ * - streamDestroyed ([[StreamEvent]])
+ * - streamPropertyChanged ([[StreamPropertyChangedEvent]])
+ * - publisherStartSpeaking ([[PublisherSpeakingEvent]])
+ * - publisherStopSpeaking ([[PublisherSpeakingEvent]])
+ * - signal ([[SignalEvent]])
+ * - recordingStarted ([[RecordingEvent]])
+ * - recordingStopped ([[RecordingEvent]])
+ * - reconnecting
+ * - reconnected
+ * 
  */
 export class Session implements EventDispatcher {
 
@@ -78,12 +95,12 @@ export class Session implements EventDispatcher {
      */
     remoteStreamsCreated: ObjMap<boolean> = {};
 
-    /**	
-     * @hidden	
+    /**
+     * @hidden
      */
     isFirstIonicIosSubscriber = true;
-    /**	
-     * @hidden	
+    /**
+     * @hidden
      */
     countDownForIonicIosSubscribersActive = true;
     /**
@@ -101,7 +118,19 @@ export class Session implements EventDispatcher {
     /**
      * @hidden
      */
-    speakingEventsEnabled = false;
+    startSpeakingEventsEnabled = false;
+    /**
+     * @hidden
+     */
+    startSpeakingEventsEnabledOnce = false;
+    /**
+     * @hidden
+     */
+    stopSpeakingEventsEnabled = false;
+    /**
+     * @hidden
+     */
+    stopSpeakingEventsEnabledOnce = false;
 
     private ee = new EventEmitter();
     private logger: log.Logger;
@@ -526,9 +555,10 @@ export class Session implements EventDispatcher {
 
             if (signal.to && signal.to.length > 0) {
                 const connectionIds: string[] = [];
-
                 signal.to.forEach(connection => {
-                    connectionIds.push(connection.connectionId);
+                    if (!!connection.connectionId) {
+                        connectionIds.push(connection.connectionId);
+                    }
                 });
                 signalMessage['to'] = connectionIds;
             } else {
@@ -573,13 +603,23 @@ export class Session implements EventDispatcher {
             handler(event);
         });
 
-        if (type === 'publisherStartSpeaking' || type === 'publisherStopSpeaking') {
-            this.speakingEventsEnabled = true;
+        if (type === 'publisherStartSpeaking') {
+            this.startSpeakingEventsEnabled = true;
             // If there are already available remote streams, enable hark 'speaking' event in all of them
             for (const connectionId in this.remoteConnections) {
                 const str = this.remoteConnections[connectionId].stream;
                 if (!!str && str.hasAudio) {
-                    str.enableSpeakingEvents();
+                    str.enableStartSpeakingEvent();
+                }
+            }
+        }
+        if (type === 'publisherStopSpeaking') {
+            this.stopSpeakingEventsEnabled = true;
+            // If there are already available remote streams, enable hark 'stopped_speaking' event in all of them
+            for (const connectionId in this.remoteConnections) {
+                const str = this.remoteConnections[connectionId].stream;
+                if (!!str && str.hasAudio) {
+                    str.enableStopSpeakingEvent();
                 }
             }
         }
@@ -595,20 +635,30 @@ export class Session implements EventDispatcher {
 
         this.ee.once(type, event => {
             if (event) {
-                console.info("Event '" + type + "' triggered by 'Session'", event);
+                console.info("Event '" + type + "' triggered once by 'Session'", event);
             } else {
-                console.info("Event '" + type + "' triggered by 'Session'");
+                console.info("Event '" + type + "' triggered once by 'Session'");
             }
             handler(event);
         });
 
-        if (type === 'publisherStartSpeaking' || type === 'publisherStopSpeaking') {
-            this.speakingEventsEnabled = true;
-            // If there are already available remote streams, enable hark in all of them
+        if (type === 'publisherStartSpeaking') {
+            this.startSpeakingEventsEnabledOnce = true;
+            // If there are already available remote streams, enable hark 'speaking' event in all of them once
             for (const connectionId in this.remoteConnections) {
                 const str = this.remoteConnections[connectionId].stream;
                 if (!!str && str.hasAudio) {
-                    str.enableOnceSpeakingEvents();
+                    str.enableOnceStartSpeakingEvent();
+                }
+            }
+        }
+        if (type === 'publisherStopSpeaking') {
+            this.stopSpeakingEventsEnabledOnce = true;
+            // If there are already available remote streams, enable hark 'stopped_speaking' event in all of them once
+            for (const connectionId in this.remoteConnections) {
+                const str = this.remoteConnections[connectionId].stream;
+                if (!!str && str.hasAudio) {
+                    str.enableOnceStopSpeakingEvent();
                 }
             }
         }
@@ -621,21 +671,35 @@ export class Session implements EventDispatcher {
      * See [[EventDispatcher.off]]
      */
     off(type: string, handler?: (event: SessionDisconnectedEvent | SignalEvent | StreamEvent | ConnectionEvent | PublisherSpeakingEvent | RecordingEvent) => void): Session {
-
         if (!handler) {
             this.ee.removeAllListeners(type);
         } else {
             this.ee.off(type, handler);
         }
 
-        if (type === 'publisherStartSpeaking' || type === 'publisherStopSpeaking') {
-            this.speakingEventsEnabled = false;
-
-            // If there are already available remote streams, disable hark in all of them
-            for (const connectionId in this.remoteConnections) {
-                const str = this.remoteConnections[connectionId].stream;
-                if (!!str) {
-                    str.disableSpeakingEvents();
+        if (type === 'publisherStartSpeaking') {
+            let remainingStartSpeakingListeners = this.ee.getListeners(type).length;
+            if (remainingStartSpeakingListeners === 0) {
+                this.startSpeakingEventsEnabled = false;
+                // If there are already available remote streams, disable hark in all of them
+                for (const connectionId in this.remoteConnections) {
+                    const str = this.remoteConnections[connectionId].stream;
+                    if (!!str) {
+                        str.disableStartSpeakingEvent(false);
+                    }
+                }
+            }
+        }
+        if (type === 'publisherStopSpeaking') {
+            let remainingStopSpeakingListeners = this.ee.getListeners(type).length;
+            if (remainingStopSpeakingListeners === 0) {
+                this.stopSpeakingEventsEnabled = false;
+                // If there are already available remote streams, disable hark in all of them
+                for (const connectionId in this.remoteConnections) {
+                    const str = this.remoteConnections[connectionId].stream;
+                    if (!!str) {
+                        str.disableStopSpeakingEvent(false);
+                    }
                 }
             }
         }
@@ -792,18 +856,29 @@ export class Session implements EventDispatcher {
 
         console.info('New signal: ' + JSON.stringify(msg));
 
-        this.getConnection(msg.from, "Connection '" + msg.from + "' unknow when 'onNewMessage'. Existing remote connections: "
-            + JSON.stringify(Object.keys(this.remoteConnections)) + '. Existing local connection: ' + this.connection.connectionId)
+        const strippedType: string = !!msg.type ? msg.type.replace(/^(signal:)/, '') : undefined;
 
-            .then(connection => {
-                this.ee.emitEvent('signal', [new SignalEvent(this, msg.type, msg.data, connection)]);
-                if (msg.type !== 'signal') {
-                    this.ee.emitEvent(msg.type, [new SignalEvent(this, msg.type, msg.data, connection)]);
-                }
-            })
-            .catch(openViduError => {
-                console.error(openViduError);
-            });
+        if (!!msg.from) {
+            // Signal sent by other client
+            this.getConnection(msg.from, "Connection '" + msg.from + "' unknow when 'onNewMessage'. Existing remote connections: "
+                + JSON.stringify(Object.keys(this.remoteConnections)) + '. Existing local connection: ' + this.connection.connectionId)
+
+                .then(connection => {
+                    this.ee.emitEvent('signal', [new SignalEvent(this, strippedType, msg.data, connection)]);
+                    if (msg.type !== 'signal') {
+                        this.ee.emitEvent(msg.type, [new SignalEvent(this, strippedType, msg.data, connection)]);
+                    }
+                })
+                .catch(openViduError => {
+                    console.error(openViduError);
+                });
+        } else {
+            // Signal sent by server
+            this.ee.emitEvent('signal', [new SignalEvent(this, strippedType, msg.data, undefined)]);
+            if (msg.type !== 'signal') {
+                this.ee.emitEvent(msg.type, [new SignalEvent(this, strippedType, msg.data, undefined)]);
+            }
+        }
     }
 
     /**
@@ -925,7 +1000,7 @@ export class Session implements EventDispatcher {
      * @hidden
      */
     onLostConnection(reason: string): void {
-        console.warn('Lost connection in session ' + this.sessionId + ' waiting for reconnect');
+        console.warn('Lost connection in Session ' + this.sessionId);
         if (!!this.sessionId && !this.connection.disposed) {
             this.leave(true, reason);
         }
@@ -935,15 +1010,15 @@ export class Session implements EventDispatcher {
      * @hidden
      */
     onRecoveredConnection(): void {
-        console.warn('Recovered connection in Session ' + this.sessionId);
-        // this.ee.emitEvent('connectionRecovered', []);
+        console.info('Recovered connection in Session ' + this.sessionId);
+        this.reconnectBrokenStreams();
+        this.ee.emitEvent('reconnected', []);
     }
 
     /**
      * @hidden
      */
     onMediaError(params): void {
-
         console.error('Media error: ' + JSON.stringify(params));
         const err = params.error;
         if (err) {
@@ -982,6 +1057,31 @@ export class Session implements EventDispatcher {
                 const stream: Stream = connection.stream;
                 stream.filter.handlers[response.eventType](new FilterEvent(stream.filter, response.eventType, response.data));
             });
+    }
+
+    /**
+     * @hidden
+     */
+    reconnectBrokenStreams(): void {
+        console.info('Re-establishing media connections...');
+        let someReconnection = false;
+        // Re-establish Publisher stream
+        if (!!this.connection.stream && this.connection.stream.streamIceConnectionStateBroken()) {
+            console.warn('Re-establishing Publisher ' + this.connection.stream.streamId);
+            this.connection.stream.initWebRtcPeerSend(true);
+            someReconnection = true;
+        }
+        // Re-establish Subscriber streams
+        for (let remoteConnection of Object.values(this.remoteConnections)) {
+            if (!!remoteConnection.stream && remoteConnection.stream.streamIceConnectionStateBroken()) {
+                console.warn('Re-establishing Subscriber ' + remoteConnection.stream.streamId);
+                remoteConnection.stream.initWebRtcPeerReceive(true);
+                someReconnection = true;
+            }
+        }
+        if (!someReconnection) {
+            console.info('There were no media streams in need of a reconnection');
+        }
     }
 
     /**
@@ -1178,6 +1278,7 @@ export class Session implements EventDispatcher {
             this.sessionId = <string>queryParams['sessionId'];
             const secret = queryParams['secret'];
             const recorder = queryParams['recorder'];
+            const coturnIp = queryParams['coturnIp'];
             const turnUsername = queryParams['turnUsername'];
             const turnCredential = queryParams['turnCredential'];
             const role = queryParams['role'];
@@ -1191,14 +1292,15 @@ export class Session implements EventDispatcher {
                 this.openvidu.recorder = true;
             }
             if (!!turnUsername && !!turnCredential) {
-                const stunUrl = 'stun:' + url.hostname + ':3478';
-                const turnUrl1 = 'turn:' + url.hostname + ':3478';
+                const stunUrl = 'stun:' + coturnIp + ':3478';
+                const turnUrl1 = 'turn:' + coturnIp + ':3478';
                 const turnUrl2 = turnUrl1 + '?transport=tcp';
                 this.openvidu.iceServers = [
                     { urls: [stunUrl] },
                     { urls: [turnUrl1, turnUrl2], username: turnUsername, credential: turnCredential }
                 ];
                 this.logger.debug("TURN temp credentials [%s:%s]", turnUsername, turnCredential);
+                console.log("STUN/TURN server IP: " + coturnIp);
             }
             if (!!role) {
                 this.openvidu.role = role;

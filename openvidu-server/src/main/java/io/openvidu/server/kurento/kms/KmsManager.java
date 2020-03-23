@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,8 +24,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Collectors;
 
 import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
 
 import org.kurento.client.KurentoConnectionListener;
 import org.slf4j.Logger;
@@ -35,8 +39,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import com.google.gson.JsonObject;
 
 import io.openvidu.server.config.OpenviduConfig;
+import io.openvidu.server.utils.MediaNodeStatusManager;
 
 public abstract class KmsManager {
+
+	public static final Lock selectAndRemoveKmsLock = new ReentrantLock(true);
 
 	public class KmsLoad implements Comparable<KmsLoad> {
 
@@ -72,7 +79,6 @@ public abstract class KmsManager {
 			json.addProperty("load", this.load);
 			return json;
 		}
-
 	}
 
 	protected static final Logger log = LoggerFactory.getLogger(KmsManager.class);
@@ -82,6 +88,9 @@ public abstract class KmsManager {
 
 	@Autowired
 	protected LoadManager loadManager;
+
+	@Autowired
+	protected MediaNodeStatusManager mediaNodeStatusManager;
 
 	final protected Map<String, Kms> kmss = new ConcurrentHashMap<>();
 
@@ -93,16 +102,20 @@ public abstract class KmsManager {
 		return this.kmss.remove(kmsId);
 	}
 
-	public synchronized Kms getLessLoadedKms() throws NoSuchElementException {
-		return Collections.min(getKmsLoads()).kms;
+	public synchronized Kms getLessLoadedAndRunningKms() throws NoSuchElementException {
+		List<KmsLoad> kmsLoads = getKmsLoads().stream()
+				.filter(kmsLoad -> mediaNodeStatusManager.isRunning(kmsLoad.kms.getId())).collect(Collectors.toList());
+		return Collections.min(kmsLoads).kms;
+	}
+
+	public synchronized List<KmsLoad> getKmssSortedByLoad() {
+		List<KmsLoad> kmsLoads = getKmsLoads();
+		Collections.sort(kmsLoads);
+		return kmsLoads;
 	}
 
 	public Kms getKms(String kmsId) {
 		return this.kmss.get(kmsId);
-	}
-
-	public boolean kmsWithUriExists(String kmsUri) {
-		return this.kmss.values().stream().anyMatch(kms -> kms.getUri().equals(kmsUri));
 	}
 
 	public KmsLoad getKmsLoad(String kmsId) {
@@ -114,10 +127,8 @@ public abstract class KmsManager {
 		return this.kmss.values();
 	}
 
-	public synchronized List<KmsLoad> getKmssSortedByLoad() {
-		List<KmsLoad> kmsLoads = getKmsLoads();
-		Collections.sort(kmsLoads);
-		return kmsLoads;
+	public boolean kmsWithUriExists(String kmsUri) {
+		return this.kmss.values().stream().anyMatch(kms -> kms.getUri().equals(kmsUri));
 	}
 
 	private List<KmsLoad> getKmsLoads() {
@@ -130,11 +141,7 @@ public abstract class KmsManager {
 		return kmsLoads;
 	}
 
-	public boolean destroyWhenUnused() {
-		return false;
-	}
-
-	protected KurentoConnectionListener generateKurentoConnectionListener(String kmsId) {
+	protected KurentoConnectionListener generateKurentoConnectionListener(final String kmsId) {
 		return new KurentoConnectionListener() {
 
 			@Override
@@ -176,24 +183,30 @@ public abstract class KmsManager {
 			@Override
 			public void connected() {
 				final Kms kms = kmss.get(kmsId);
-				kms.setKurentoClientConnected(true);
-				kms.setTimeOfKurentoClientConnection(System.currentTimeMillis());
-				log.warn("Kurento Client is now connected to KMS {} with uri {}", kmsId, kms.getUri());
+				// TODO: This should be done here instead of after KurentoClient.create method returns
+				// kms.setKurentoClientConnected(true);
+				// kms.setTimeOfKurentoClientConnection(System.currentTimeMillis());
+				log.info("Kurento Client is now connected to KMS {} with uri {}", kmsId, kms.getUri());
 			}
 		};
 	}
 
-	public abstract List<Kms> initializeKurentoClients(List<String> kmsUris) throws Exception;
+	public abstract List<Kms> initializeKurentoClients(List<KmsProperties> kmsProperties, boolean disconnectUponFailure,
+			boolean sendMediaNodeAddedEvent) throws Exception;
+
+	public LoadManager getLoadManager() {
+		return this.loadManager;
+	}
 
 	@PostConstruct
-	private void postConstruct() {
-		try {
-			this.initializeKurentoClients(this.openviduConfig.getKmsUris());
-		} catch (Exception e) {
-			// Some KMS wasn't reachable
-			log.error("Shutting down OpenVidu Server");
-			System.exit(1);
-		}
+	protected abstract void postConstructInitKurentoClients();
+
+	@PreDestroy
+	public void close() {
+		log.info("Closing all KurentoClients");
+		this.kmss.values().forEach(kms -> {
+			kms.getKurentoClient().destroy();
+		});
 	}
 
 }

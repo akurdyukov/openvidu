@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,21 +40,21 @@ public class SubscriberEndpoint extends MediaEndpoint {
 
 	private AtomicBoolean connectedToPublisher = new AtomicBoolean(false);
 
-	private PublisherEndpoint publisher = null;
+	private String publisherStreamId;
 
-	public SubscriberEndpoint(boolean web, KurentoParticipant owner, String endpointName, MediaPipeline pipeline,
-			OpenviduConfig openviduConfig) {
-		super(web, owner, endpointName, pipeline, openviduConfig, log);
+	public SubscriberEndpoint(EndpointType endpointType, KurentoParticipant owner, String endpointName,
+			MediaPipeline pipeline, OpenviduConfig openviduConfig) {
+		super(endpointType, owner, endpointName, pipeline, openviduConfig, log);
 	}
 
 	public synchronized String subscribe(String sdpOffer, PublisherEndpoint publisher) {
 		registerOnIceCandidateEventListener(publisher.getOwner().getParticipantPublicId());
+		this.createdAt = System.currentTimeMillis();
 		String sdpAnswer = processOffer(sdpOffer);
 		gatherCandidates();
 		publisher.connect(this.getEndpoint());
 		setConnectedToPublisher(true);
-		setPublisher(publisher);
-		this.createdAt = System.currentTimeMillis();
+		this.publisherStreamId = publisher.getStreamId();
 		return sdpAnswer;
 	}
 
@@ -66,15 +66,11 @@ public class SubscriberEndpoint extends MediaEndpoint {
 		this.connectedToPublisher.set(connectedToPublisher);
 	}
 
-	public void setPublisher(PublisherEndpoint publisher) {
-		this.publisher = publisher;
-	}
-
 	@Override
 	public JsonObject toJson() {
 		JsonObject json = super.toJson();
 		try {
-			json.addProperty("streamId", this.publisher.getStreamId());
+			json.addProperty("streamId", this.publisherStreamId);
 		} catch (NullPointerException ex) {
 			json.addProperty("streamId", "NOT_FOUND");
 		}

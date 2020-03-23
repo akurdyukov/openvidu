@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -86,14 +86,8 @@ export class WebRtcPeer {
                 reject('The peer connection object is in "closed" state. This is most likely due to an invocation of the dispose method before accepting in the dialogue');
             }
             if (!!this.configuration.mediaStream) {
-                if (platform['isIonicIos']) {
-                    // iOS Ionic. LIMITATION: must use deprecated WebRTC API
-                    const pc2: any = this.pc;
-                    pc2.addStream(this.configuration.mediaStream);
-                } else {
-                    for (const track of this.configuration.mediaStream.getTracks()) {
-                        this.pc.addTrack(track, this.configuration.mediaStream);
-                    }
+                for (const track of this.configuration.mediaStream.getTracks()) {
+                    this.pc.addTrack(track, this.configuration.mediaStream);
                 }
                 resolve();
             }
@@ -103,54 +97,15 @@ export class WebRtcPeer {
     /**
      * This method frees the resources used by WebRtcPeer
      */
-    dispose(videoSourceIsMediaStreamTrack: boolean) {
+    dispose() {
         console.debug('Disposing WebRtcPeer');
-        try {
-            if (this.pc) {
-                if (this.pc.signalingState === 'closed') {
-                    return;
-                }
-                this.remoteCandidatesQueue = [];
-                this.localCandidatesQueue = [];
-
-                if (platform['isIonicIos']) {
-                    // iOS Ionic. LIMITATION: must use deprecated WebRTC API
-                    // Stop senders deprecated
-                    const pc1: any = this.pc;
-                    for (const sender of pc1.getLocalStreams()) {
-                        if (!videoSourceIsMediaStreamTrack) {
-                            sender.stop();
-                        }
-                        pc1.removeStream(sender);
-                    }
-                    // Stop receivers deprecated
-                    for (const receiver of pc1.getRemoteStreams()) {
-                        if (!!receiver.track) {
-                            receiver.stop();
-                        }
-                    }
-                } else {
-                    // Stop senders
-                    for (const sender of this.pc.getSenders()) {
-                        if (!videoSourceIsMediaStreamTrack) {
-                            if (!!sender.track) {
-                                sender.track.stop();
-                            }
-                        }
-                        this.pc.removeTrack(sender);
-                    }
-                    // Stop receivers
-                    for (const receiver of this.pc.getReceivers()) {
-                        if (!!receiver.track) {
-                            receiver.track.stop();
-                        }
-                    }
-                }
-
-                this.pc.close();
+        if (this.pc) {
+            if (this.pc.signalingState === 'closed') {
+                return;
             }
-        } catch (err) {
-            console.warn('Exception disposing webrtc peer ' + err);
+            this.pc.close();
+            this.remoteCandidatesQueue = [];
+            this.localCandidatesQueue = [];
         }
     }
 
@@ -288,6 +243,36 @@ export class WebRtcPeer {
                     resolve();
             }
         });
+    }
+
+    addIceConnectionStateChangeListener(otherId: string) {
+        this.pc.oniceconnectionstatechange = () => {
+            const iceConnectionState: RTCIceConnectionState = this.pc.iceConnectionState;
+            switch (iceConnectionState) {
+                case 'disconnected':
+                    // Possible network disconnection
+                    console.warn('IceConnectionState of RTCPeerConnection ' + this.id + ' (' + otherId + ') change to "disconnected". Possible network disconnection');
+                    break;
+                case 'failed':
+                    console.error('IceConnectionState of RTCPeerConnection ' + this.id + ' (' + otherId + ') to "failed"');
+                    break;
+                case 'closed':
+                    console.log('IceConnectionState of RTCPeerConnection ' + this.id + ' (' + otherId + ') change to "closed"');
+                    break;
+                case 'new':
+                    console.log('IceConnectionState of RTCPeerConnection ' + this.id + ' (' + otherId + ') change to "new"');
+                    break;
+                case 'checking':
+                    console.log('IceConnectionState of RTCPeerConnection ' + this.id + ' (' + otherId + ') change to "checking"');
+                    break;
+                case 'connected':
+                    console.log('IceConnectionState of RTCPeerConnection ' + this.id + ' (' + otherId + ') change to "connected"');
+                    break;
+                case 'completed':
+                    console.log('IceConnectionState of RTCPeerConnection ' + this.id + ' (' + otherId + ') change to "completed"');
+                    break;
+            }
+        }
     }
 
 }

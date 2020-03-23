@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,18 +33,14 @@ public class ParticipantSummary {
 	private Map<String, CDREventWebrtcConnection> publishers = new ConcurrentHashMap<>();
 	private Map<String, CDREventWebrtcConnection> subscribers = new ConcurrentHashMap<>();
 
-	public ParticipantSummary(CDREventParticipant event) {
-		this.eventParticipantEnd = event;
+	public ParticipantSummary(Participant participant) {
+		this.eventParticipantEnd = new CDREventParticipant(participant);
 	}
 
 	public ParticipantSummary(CDREventParticipant event, ParticipantSummary oldSummary) {
 		this.eventParticipantEnd = event;
 		this.publishers = oldSummary.publishers;
 		this.subscribers = oldSummary.subscribers;
-	}
-
-	public ParticipantSummary(String sessionId, Participant participant) {
-		this.eventParticipantEnd = new CDREventParticipant(sessionId, participant);
 	}
 
 	public void addPublisherClosed(String streamId, CDREventWebrtcConnection event) {

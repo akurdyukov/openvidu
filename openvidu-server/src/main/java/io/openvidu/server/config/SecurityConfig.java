@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,13 +59,13 @@ public class SecurityConfig extends WebSecurityConfigurerAdapter {
 				.antMatchers("/").authenticated();
 
 		// Security for layouts
-		conf.antMatchers("/layouts/*").authenticated();
+		conf.antMatchers("/layouts/**").authenticated();
 
 		// Security for recorded videos
 		if (openviduConf.getOpenViduRecordingPublicAccess()) {
-			conf = conf.antMatchers("/recordings/*").permitAll();
+			conf = conf.antMatchers("/recordings/**").permitAll();
 		} else {
-			conf = conf.antMatchers("/recordings/*").authenticated();
+			conf = conf.antMatchers("/recordings/**").authenticated();
 		}
 
 		conf.and().httpBasic();

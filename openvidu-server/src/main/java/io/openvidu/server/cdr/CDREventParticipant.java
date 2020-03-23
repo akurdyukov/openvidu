@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,8 +27,8 @@ public class CDREventParticipant extends CDREventEnd {
 	private Participant participant;
 
 	// participantJoined
-	public CDREventParticipant(String sessionId, Participant participant) {
-		super(CDREventName.participantJoined, sessionId, participant.getCreatedAt());
+	public CDREventParticipant(Participant participant) {
+		super(CDREventName.participantJoined, participant.getSessionId(), participant.getCreatedAt());
 		this.participant = participant;
 	}
 
@@ -45,6 +45,8 @@ public class CDREventParticipant extends CDREventEnd {
 		json.addProperty("location",
 				this.participant.getLocation() != null ? this.participant.getLocation().toString() : "unknown");
 		json.addProperty("platform", this.participant.getPlatform());
+		json.addProperty("clientData", this.participant.getClientMetadata());
+		json.addProperty("serverData", this.participant.getServerMetadata());
 		return json;
 	}
 

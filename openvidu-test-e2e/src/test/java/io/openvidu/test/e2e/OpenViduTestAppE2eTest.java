@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import java.nio.file.Paths;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -49,17 +50,13 @@ import org.jcodec.api.FrameGrab;
 import org.jcodec.api.JCodecException;
 import org.jcodec.common.model.Picture;
 import org.jcodec.scale.AWTUtil;
-import org.json.simple.JSONArray;
-import org.json.simple.JSONObject;
-import org.json.simple.parser.JSONParser;
 import org.junit.Assert;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
-import org.junit.platform.runner.JUnitPlatform;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.openqa.selenium.Alert;
 import org.openqa.selenium.By;
 import org.openqa.selenium.Dimension;
@@ -71,10 +68,13 @@ import org.openqa.selenium.support.ui.ExpectedCondition;
 import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.test.context.junit.jupiter.SpringExtension;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.gson.stream.JsonReader;
 import com.mashape.unirest.http.HttpMethod;
 
@@ -100,11 +100,11 @@ import io.openvidu.test.browsers.ChromeAndroidUser;
 import io.openvidu.test.browsers.ChromeUser;
 import io.openvidu.test.browsers.FirefoxUser;
 import io.openvidu.test.browsers.OperaUser;
-import io.openvidu.test.e2e.utils.CommandLineExecutor;
-import io.openvidu.test.e2e.utils.CustomHttpClient;
-import io.openvidu.test.e2e.utils.CustomWebhook;
-import io.openvidu.test.e2e.utils.MultimediaFileMetadata;
-import io.openvidu.test.e2e.utils.Unzipper;
+import io.openvidu.test.browsers.utils.CommandLineExecutor;
+import io.openvidu.test.browsers.utils.CustomHttpClient;
+import io.openvidu.test.browsers.utils.CustomWebhook;
+import io.openvidu.test.browsers.utils.MultimediaFileMetadata;
+import io.openvidu.test.browsers.utils.Unzipper;
 
 /**
  * E2E tests for openvidu-testapp.
@@ -114,7 +114,7 @@ import io.openvidu.test.e2e.utils.Unzipper;
  */
 @Tag("e2e")
 @DisplayName("E2E tests for OpenVidu TestApp")
-@RunWith(JUnitPlatform.class)
+@ExtendWith(SpringExtension.class)
 public class OpenViduTestAppE2eTest {
 
 	static String OPENVIDU_SECRET = "MY_SECRET";
@@ -265,6 +265,7 @@ public class OpenViduTestAppE2eTest {
 			this.restartKms();
 			isKurentoRestartTest = false;
 		}
+		OV = new OpenVidu(OPENVIDU_URL, OPENVIDU_SECRET);
 	}
 
 	@Test
@@ -675,7 +676,7 @@ public class OpenViduTestAppE2eTest {
 
 		setupBrowser("chrome");
 
-		log.info("Signal message");
+		log.info("Publisher unpublish");
 
 		user.getDriver().findElement(By.id("auto-join-checkbox")).click();
 		user.getDriver().findElement(By.id("one2one-btn")).click();
@@ -986,6 +987,8 @@ public class OpenViduTestAppE2eTest {
 		user.getEventManager().on("streamPropertyChanged", (event) -> {
 			String expectedDimensions = "{\"width\":" + expectedWidthHeight[0] + ",\"height\":" + expectedWidthHeight[1]
 					+ "}";
+			System.out.println("Publisher dimensions: " + event.get("newValue").getAsJsonObject().toString());
+			System.out.println("Real dimensions of viewport: " + expectedDimensions);
 			threadAssertions.add("videoDimensions".equals(event.get("changedProperty").getAsString()));
 			threadAssertions.add(expectedDimensions.equals(event.get("newValue").getAsJsonObject().toString()));
 			latch3.countDown();
@@ -994,12 +997,12 @@ public class OpenViduTestAppE2eTest {
 		user.getDriver().manage().window().setSize(new Dimension(newWidth, newHeight));
 
 		String widthAndHeight = user.getEventManager().getDimensionOfViewport();
-		JSONObject obj = (JSONObject) new JSONParser().parse(widthAndHeight);
+		JsonObject obj = JsonParser.parseString(widthAndHeight).getAsJsonObject();
 
-		expectedWidthHeight[0] = (long) obj.get("width");
-		expectedWidthHeight[1] = (long) obj.get("height");
+		expectedWidthHeight[0] = obj.get("width").getAsLong();
+		expectedWidthHeight[1] = obj.get("height").getAsLong();
 
-		System.out.println("New viewport dimension: " + obj.toJSONString());
+		System.out.println("New viewport dimension: " + obj.toString());
 
 		user.getEventManager().waitUntilEventReaches("streamPropertyChanged", 6);
 
@@ -1008,6 +1011,8 @@ public class OpenViduTestAppE2eTest {
 			fail();
 			return;
 		}
+
+		System.out.println(getBase64Screenshot(user));
 
 		user.getEventManager().off("streamPropertyChanged");
 		log.info("Thread assertions: {}", threadAssertions.toString());
@@ -1057,10 +1062,17 @@ public class OpenViduTestAppE2eTest {
 
 		recordBtn.click();
 
+		Thread.sleep(2000);
+
 		user.getWaiter().until(ExpectedConditions.elementToBeClickable(By.cssSelector("#recorder-preview video")));
 
-		user.getWaiter().until(
-				waitForVideoDuration(user.getDriver().findElement(By.cssSelector("#recorder-preview video")), 4));
+		try {
+			user.getWaiter().until(
+					waitForVideoDuration(user.getDriver().findElement(By.cssSelector("#recorder-preview video")), 4));
+		} catch (Exception e) {
+			System.out.println(getBase64Screenshot(user));
+			Assert.fail();
+		}
 
 		user.getDriver().findElement(By.id("close-record-btn")).click();
 
@@ -1231,10 +1243,6 @@ public class OpenViduTestAppE2eTest {
 
 		final String sessionName = "TestSession";
 		final String recordingName = "CUSTOM_NAME";
-
-		user.getDriver().findElement(By.id("add-user-btn")).click();
-		user.getDriver().findElement(By.id("session-name-input-0")).clear();
-		user.getDriver().findElement(By.id("session-name-input-0")).sendKeys(sessionName);
 
 		user.getDriver().findElement(By.id("auto-join-checkbox")).click();
 		user.getDriver().findElement(By.id("one2one-btn")).click();
@@ -1621,9 +1629,10 @@ public class OpenViduTestAppE2eTest {
 
 		// Store connectionId and streamId
 		String response = user.getDriver().findElement(By.id("api-response-text-area")).getAttribute("value");
-		JSONObject json = (JSONObject) ((JSONArray) new JSONParser().parse(response.split("%")[1])).get(0);
-		String connectionId = (String) json.keySet().iterator().next();
-		String streamId = (String) ((JSONObject) ((JSONArray) json.get(connectionId)).get(0)).get("streamId");
+		JsonObject json = JsonParser.parseString(response.split("%")[1]).getAsJsonArray().get(0).getAsJsonObject();
+		String connectionId = json.keySet().iterator().next();
+		String streamId = json.get(connectionId).getAsJsonArray().get(0).getAsJsonObject().get("streamId")
+				.getAsString();
 
 		// Fetch all sessions (no change)
 		user.getDriver().findElement(By.id("list-sessions-btn")).click();
@@ -1892,11 +1901,16 @@ public class OpenViduTestAppE2eTest {
 
 		// Publisher unsubscribes from "CodeFound" filter event
 		user.getDriver().findElement(By.id("unsub-filter-event-btn")).click();
+		user.getWaiter().until(ExpectedConditions.attributeContains(By.id("filter-response-text-area"), "value",
+				"Filter event listener removed"));
+
+		// In case some filter event was receive while waiting for unsubscription
+		user.getEventManager().clearCurrentEvents("CodeFound");
 
 		try {
 			// If this active wait finishes successfully, then the removal of the event
 			// listener has not worked fine
-			user.getEventManager().waitUntilEventReaches("CodeFound", 3, 3, false);
+			user.getEventManager().waitUntilEventReaches("CodeFound", 1, 3, false);
 			Assert.fail("'filterEvent' was received. Filter.removeEventListener() failed");
 		} catch (Exception e) {
 			System.out.println("Filter event removal worked fine");
@@ -1915,18 +1929,22 @@ public class OpenViduTestAppE2eTest {
 		user.getWaiter().until(ExpectedConditions.attributeContains(By.id("filter-response-text-area"), "value",
 				"Filter event listener added"));
 
-		user.getEventManager().waitUntilEventReaches("CodeFound", 4);
+		user.getEventManager().waitUntilEventReaches("CodeFound", 1);
 
 		// Moderator removes the Publisher's filter
 		user.getDriver().findElement(By.id("remove-filter-btn")).click();
 		user.getWaiter().until(
 				ExpectedConditions.attributeContains(By.id("filter-response-text-area"), "value", "Filter removed"));
+
+		// In case some filter event was receive while waiting for filter removal
+		user.getEventManager().clearCurrentEvents("CodeFound");
+
 		user.getEventManager().waitUntilEventReaches("streamPropertyChanged", 4);
 
 		try {
 			// If this active wait finishes successfully, then the removal of the filter has
 			// not worked fine
-			user.getEventManager().waitUntilEventReaches("CodeFound", 5, 3, false);
+			user.getEventManager().waitUntilEventReaches("CodeFound", 1, 3, false);
 			Assert.fail("'filterEvent' was received. Stream.removeFilter() failed");
 		} catch (Exception e) {
 			System.out.println("Filter removal worked fine");
@@ -1945,6 +1963,8 @@ public class OpenViduTestAppE2eTest {
 		user.getDriver().manage().window().setSize(new Dimension(1000, 800));
 
 		log.info("openvidu-java-client test");
+
+		System.out.println(getBase64Screenshot(user));
 
 		user.getDriver().findElement(By.id("one2one-btn")).click();
 
@@ -2109,6 +2129,16 @@ public class OpenViduTestAppE2eTest {
 		user.getEventManager().waitUntilEventReaches("streamCreated", 4);
 		user.getEventManager().waitUntilEventReaches("streamPlaying", 4);
 
+		try {
+			// FIX: Chrome now shows an infobar when screen sharing that triggers
+			// streamPropertyChanged event for videoDimensions of Publisher
+			// Wait until this is triggered to not affect future assertions
+			user.getEventManager().waitUntilEventReaches("streamPropertyChanged", 1);
+		} catch (Exception e) {
+			log.warn(
+					"Screen sharing publisher didn't trigger streamPropertyChanged event for videoDimensions (screen sharing infobar)");
+		}
+
 		Assert.assertTrue("Session.fetch() should return true after publisher changed", session.fetch());
 		Assert.assertFalse("OpenVidu.fetch() should return false after Session.fetch()", OV.fetch());
 
@@ -2123,8 +2153,9 @@ public class OpenViduTestAppE2eTest {
 		pub = connectionModerator.getPublishers().get(0);
 
 		String widthAndHeight = user.getEventManager().getDimensionOfViewport();
-		JSONObject obj = (JSONObject) new JSONParser().parse(widthAndHeight);
-		Assert.assertEquals("{\"width\":" + (long) obj.get("width") + ",\"height\":" + ((long) obj.get("height")) + "}",
+		JsonObject obj = JsonParser.parseString(widthAndHeight).getAsJsonObject();
+		Assert.assertEquals(
+				"{\"width\":" + obj.get("width").getAsLong() + ",\"height\":" + (obj.get("height").getAsLong()) + "}",
 				pub.getVideoDimensions());
 		Assert.assertEquals(new Integer(30), pub.getFrameRate());
 		Assert.assertEquals("SCREEN", pub.getTypeOfVideo());
@@ -2154,7 +2185,7 @@ public class OpenViduTestAppE2eTest {
 			} catch (OpenViduHttpException e2) {
 				Assert.assertEquals("Wrong HTTP status on Session.fetch()", 404, e2.getStatus());
 			}
-			Assert.assertFalse("OpenVidu.fetch() should return true", OV.fetch());
+			Assert.assertFalse("OpenVidu.fetch() should return false", OV.fetch());
 		}
 		try {
 			recordingProperties = new RecordingProperties.Builder().hasAudio(false).hasVideo(false).build();
@@ -2208,7 +2239,7 @@ public class OpenViduTestAppE2eTest {
 				recording.getDuration() > 0);
 		Assert.assertTrue("Wrong recording size. Excepected > 0 and was " + recording.getSize(),
 				recording.getSize() > 0);
-		Assert.assertNull("Wrong recording url. Expected not null and was null", recording.getUrl());
+		Assert.assertNotNull("Wrong recording url", recording.getUrl());
 		Assert.assertEquals("Wrong recording status. Expected ready and was " + recording.getStatus().name(),
 				Recording.Status.ready, recording.getStatus());
 		Assert.assertFalse("Session shouldn't be being recorded", session.isBeingRecorded());
@@ -2236,7 +2267,7 @@ public class OpenViduTestAppE2eTest {
 		OV.deleteRecording(recording2.getId());
 
 		recording2 = OV.startRecording(session.getSessionId(), recordingProperties);
-		user.getEventManager().waitUntilEventReaches("recordingStarted", 3);
+		user.getEventManager().waitUntilEventReaches("recordingStarted", 2);
 
 		Assert.assertEquals("Wrong recording name", customRecordingName, recording2.getName());
 		Assert.assertEquals("Wrong recording id", session.getSessionId() + "-1", recording2.getId());
@@ -2260,7 +2291,7 @@ public class OpenViduTestAppE2eTest {
 
 		Assert.assertTrue("Wrong recording duration", recording2.getDuration() > 0);
 		Assert.assertTrue("Wrong recording size", recording2.getSize() > 0);
-		Assert.assertNull("Wrong recording url", recording2.getUrl());
+		Assert.assertNotNull("Wrong recording url", recording2.getUrl());
 		Assert.assertEquals("Wrong recording status", Recording.Status.ready, recording2.getStatus());
 		Assert.assertFalse("Session shouldn't be being recorded", session.isBeingRecorded());
 		Assert.assertFalse("Session.fetch() should return false", session.fetch());
@@ -2341,17 +2372,18 @@ public class OpenViduTestAppE2eTest {
 
 		log.info("REST API test");
 
-		CustomHttpClient restClient = new CustomHttpClient(OPENVIDU_URL, OPENVIDU_SECRET);
+		CustomHttpClient restClient = new CustomHttpClient(OPENVIDU_URL, "OPENVIDUAPP", OPENVIDU_SECRET);
 
 		// 401
-		restClient.testAuthorizationError();
+		String wrongCredentials = "Basic "
+				+ Base64.getEncoder().encodeToString(("OPENVIDUAPP:WRONG_SECRET").getBytes());
+		Assert.assertEquals("Expected unauthorized status", HttpStatus.SC_UNAUTHORIZED,
+				restClient.getAndReturnStatus("/config", wrongCredentials));
 
 		/** GET /api/sessions (before session created) **/
 		restClient.rest(HttpMethod.GET, "/api/sessions/NOT_EXISTS", HttpStatus.SC_NOT_FOUND);
-		Map<String, Object> returnValues = new HashMap<>();
-		returnValues.put("numberOfElements", new Integer(0));
-		returnValues.put("content", "[]");
-		restClient.rest(HttpMethod.GET, "/api/sessions", null, HttpStatus.SC_OK, true, returnValues);
+		restClient.rest(HttpMethod.GET, "/api/sessions", null, HttpStatus.SC_OK, true,
+				ImmutableMap.of("numberOfElements", new Integer(0), "content", new JsonArray()));
 
 		/** POST /api/sessions **/
 		// 400
@@ -2373,9 +2405,9 @@ public class OpenViduTestAppE2eTest {
 		restClient.rest(HttpMethod.POST, "/api/sessions", body, HttpStatus.SC_OK, true,
 				"{'id': 'STR', 'createdAt': 0}");
 		// Default values
-		org.json.JSONObject res = restClient.rest(HttpMethod.POST, "/api/sessions", "{}", HttpStatus.SC_OK, true,
+		JsonObject res = restClient.rest(HttpMethod.POST, "/api/sessions", "{}", HttpStatus.SC_OK, true,
 				"{'id': 'STR', 'createdAt': 0}");
-		restClient.rest(HttpMethod.DELETE, "/api/sessions/" + res.getString("id"), HttpStatus.SC_NO_CONTENT);
+		restClient.rest(HttpMethod.DELETE, "/api/sessions/" + res.get("id").getAsString(), HttpStatus.SC_NO_CONTENT);
 
 		// 409
 		body = "{'customSessionId': 'CUSTOM_SESSION_ID'}";
@@ -2384,10 +2416,8 @@ public class OpenViduTestAppE2eTest {
 		/** GET /api/sessions (after session created) **/
 		restClient.rest(HttpMethod.GET, "/api/sessions/CUSTOM_SESSION_ID", null, HttpStatus.SC_OK, true,
 				"{'sessionId':'STR','createdAt':0,'mediaMode':'STR','recordingMode':'STR','defaultOutputMode':'STR','defaultRecordingLayout':'STR','customSessionId':'STR','connections':{'numberOfElements':0,'content':[]},'recording':true}");
-		returnValues = new HashMap<>();
-		returnValues.put("numberOfElements", new Integer(1));
-		returnValues.put("content", new org.json.JSONArray());
-		restClient.rest(HttpMethod.GET, "/api/sessions", null, HttpStatus.SC_OK, true, returnValues);
+		restClient.rest(HttpMethod.GET, "/api/sessions", null, HttpStatus.SC_OK, true,
+				ImmutableMap.of("numberOfElements", new Integer(1), "content", new JsonArray()));
 
 		/** POST /api/tokens **/
 		// 400
@@ -2408,16 +2438,30 @@ public class OpenViduTestAppE2eTest {
 		body = "{'session': 'CUSTOM_SESSION_ID', 'role': 'MODERATOR', 'data': 'SERVER_DATA', 'kurentoOptions': {'allowedFilters': ['GStreamerFilter']}}";
 		res = restClient.rest(HttpMethod.POST, "/api/tokens", body, HttpStatus.SC_OK, true,
 				"{'id':'STR','session':'STR','role':'STR','data':'STR','token':'STR','kurentoOptions':{'allowedFilters':['STR']}}");
-		final String token1 = res.getString("token");
+		final String token1 = res.get("token").getAsString();
 		Assert.assertEquals("JSON return value from /api/tokens should have equal srtings in 'id' and 'token'",
-				res.getString("id"), token1);
-		Assert.assertEquals("Wrong session parameter", "CUSTOM_SESSION_ID", res.getString("session"));
+				res.get("id").getAsString(), token1);
+		Assert.assertEquals("Wrong session parameter", "CUSTOM_SESSION_ID", res.get("session").getAsString());
 
 		// Default values
 		body = "{'session': 'CUSTOM_SESSION_ID'}";
 		res = restClient.rest(HttpMethod.POST, "/api/tokens", body, HttpStatus.SC_OK, true,
 				"{'id':'STR','session':'STR','role':'STR','data':'STR','token':'STR'}");
-		final String token2 = res.getString("id");
+		final String token2 = res.get("id").getAsString();
+
+		/** POST /api/signal (NOT ACTIVE SESSION) **/
+		body = "{}";
+		restClient.rest(HttpMethod.POST, "/api/signal", body, HttpStatus.SC_BAD_REQUEST);
+		body = "{'session': true}";
+		restClient.rest(HttpMethod.POST, "/api/signal", body, HttpStatus.SC_BAD_REQUEST);
+		body = "{'session':'CUSTOM_SESSION_ID','to':12}";
+		restClient.rest(HttpMethod.POST, "/api/signal", body, HttpStatus.SC_BAD_REQUEST);
+		body = "{'session':'CUSTOM_SESSION_ID','to':[],'data':false}";
+		restClient.rest(HttpMethod.POST, "/api/signal", body, HttpStatus.SC_BAD_REQUEST);
+		body = "{'session':'CUSTOM_SESSION_ID','to':[],'data': 'SERVERMESSAGE', 'type': true}";
+		restClient.rest(HttpMethod.POST, "/api/signal", body, HttpStatus.SC_BAD_REQUEST);
+		body = "{'session':'CUSTOM_SESSION_ID'}";
+		restClient.rest(HttpMethod.POST, "/api/signal", body, HttpStatus.SC_NOT_ACCEPTABLE); // No connections
 
 		/** POST /api/recordings/start (NOT ACTIVE SESSION) **/
 		// 400
@@ -2451,9 +2495,9 @@ public class OpenViduTestAppE2eTest {
 		// 409 (RELAYED media mode)
 		res = restClient.rest(HttpMethod.POST, "/api/sessions", "{'mediaMode':'RELAYED'}", HttpStatus.SC_OK, true,
 				"{'id': 'STR', 'createdAt': 0}");
-		body = "{'session':'" + res.getString("id") + "'}";
+		body = "{'session':'" + res.get("id").getAsString() + "'}";
 		restClient.rest(HttpMethod.POST, "/api/recordings/start", body, HttpStatus.SC_CONFLICT);
-		restClient.rest(HttpMethod.DELETE, "/api/sessions/" + res.getString("id"), HttpStatus.SC_NO_CONTENT);
+		restClient.rest(HttpMethod.DELETE, "/api/sessions/" + res.get("id").getAsString(), HttpStatus.SC_NO_CONTENT);
 
 		// Start session
 		setupBrowser("chrome");
@@ -2492,10 +2536,8 @@ public class OpenViduTestAppE2eTest {
 
 		/** GET /api/recordings (before recording started) **/
 		restClient.rest(HttpMethod.GET, "/api/recordings/NOT_EXISTS", HttpStatus.SC_NOT_FOUND);
-		returnValues = new HashMap<>();
-		returnValues.put("count", new Integer(0));
-		returnValues.put("items", "[]");
-		restClient.rest(HttpMethod.GET, "/api/recordings", null, HttpStatus.SC_OK, true, returnValues);
+		restClient.rest(HttpMethod.GET, "/api/recordings", null, HttpStatus.SC_OK, true,
+				ImmutableMap.of("count", new Integer(0), "items", new JsonArray()));
 
 		/** POST /api/recordings/start (ACTIVE SESSION) **/
 		// 200
@@ -2520,14 +2562,12 @@ public class OpenViduTestAppE2eTest {
 		// 200
 		restClient.rest(HttpMethod.DELETE, "/api/recordings/CUSTOM_SESSION_ID", HttpStatus.SC_CONFLICT);
 		restClient.rest(HttpMethod.POST, "/api/recordings/stop/CUSTOM_SESSION_ID", body, HttpStatus.SC_OK, true,
-				"{'id':'STR','sessionId':'STR','name':'STR','outputMode':'STR','recordingLayout':'STR','hasAudio':false,'hasVideo':false,'resolution':'STR','createdAt':0,'size':0,'duration':0,'url':null,'status':'STR'}");
+				"{'id':'STR','sessionId':'STR','name':'STR','outputMode':'STR','recordingLayout':'STR','hasAudio':false,'hasVideo':false,'resolution':'STR','createdAt':0,'size':0,'duration':0,'url':'STR','status':'STR'}");
 		/** GET /api/recordings (after recording created) **/
 		restClient.rest(HttpMethod.GET, "/api/recordings/CUSTOM_SESSION_ID", null, HttpStatus.SC_OK, true,
-				"{'id':'STR','sessionId':'STR','name':'STR','outputMode':'STR','recordingLayout':'STR','hasAudio':false,'hasVideo':false,'resolution':'STR','createdAt':0,'size':0,'duration':0,'url':null,'status':'STR'}");
-		returnValues = new HashMap<>();
-		returnValues.put("count", new Integer(1));
-		returnValues.put("items", new org.json.JSONArray());
-		restClient.rest(HttpMethod.GET, "/api/recordings", null, HttpStatus.SC_OK, true, returnValues);
+				"{'id':'STR','sessionId':'STR','name':'STR','outputMode':'STR','recordingLayout':'STR','hasAudio':false,'hasVideo':false,'resolution':'STR','createdAt':0,'size':0,'duration':0,'url':'STR','status':'STR'}");
+		restClient.rest(HttpMethod.GET, "/api/recordings", null, HttpStatus.SC_OK, true,
+				ImmutableMap.of("count", new Integer(1), "items", new JsonArray()));
 
 		user.getEventManager().waitUntilEventReaches("recordingStopped", 2);
 
@@ -2537,10 +2577,8 @@ public class OpenViduTestAppE2eTest {
 		restClient.rest(HttpMethod.DELETE, "/api/recordings/CUSTOM_SESSION_ID", HttpStatus.SC_NO_CONTENT);
 
 		// GET /api/recordings should return empty again
-		returnValues = new HashMap<>();
-		returnValues.put("count", new Integer(0));
-		returnValues.put("items", "[]");
-		restClient.rest(HttpMethod.GET, "/api/recordings", null, HttpStatus.SC_OK, true, returnValues);
+		restClient.rest(HttpMethod.GET, "/api/recordings", null, HttpStatus.SC_OK, true,
+				ImmutableMap.of("count", new Integer(0), "items", new JsonArray()));
 
 		/** DELETE /api/sessions/<SESSION_ID>/stream/<STREAM_ID> **/
 		restClient.rest(HttpMethod.DELETE, "/api/sessions/NOT_EXISTS/stream/NOT_EXISTS", HttpStatus.SC_BAD_REQUEST);
@@ -2553,17 +2591,36 @@ public class OpenViduTestAppE2eTest {
 						+ "'videoDimensions':'STR','filter':{}}}],'subscribers':[{'createdAt':0,'streamId':'STR','publisher':'STR'}]},{'connectionId':'STR','createdAt':0,'location':'STR',"
 						+ "'platform':'STR','token':'STR','role':'STR','serverData':'STR','clientData':'STR','publishers':[{'createdAt':0,'streamId':'STR','mediaOptions':{'hasAudio':false,"
 						+ "'audioActive':false,'hasVideo':false,'videoActive':false,'typeOfVideo':'STR','frameRate':0,'videoDimensions':'STR','filter':{}}}],'subscribers':[{'createdAt':0,'streamId':'STR','publisher':'STR'}]}]},'recording':false}");
-		String streamId = ((org.json.JSONObject) ((org.json.JSONObject) res.getJSONObject("connections")
-				.getJSONArray("content").get(0)).getJSONArray("publishers").get(0)).getString("streamId");
+		String streamId = res.get("connections").getAsJsonObject().get("content").getAsJsonArray().get(0)
+				.getAsJsonObject().get("publishers").getAsJsonArray().get(0).getAsJsonObject().get("streamId")
+				.getAsString();
 		restClient.rest(HttpMethod.DELETE, "/api/sessions/CUSTOM_SESSION_ID/stream/" + streamId,
 				HttpStatus.SC_NO_CONTENT);
+
+		final String connectionId = res.get("connections").getAsJsonObject().get("content").getAsJsonArray().get(0)
+				.getAsJsonObject().get("connectionId").getAsString();
+
+		/** POST /api/signal (ACTIVE SESSION) **/
+		body = "{'session':'CUSTOM_SESSION_ID','to':['wrongConnectionId']}";
+		restClient.rest(HttpMethod.POST, "/api/signal", body, HttpStatus.SC_NOT_ACCEPTABLE); // No valid connectionId
+		body = "{'session':'CUSTOM_SESSION_ID','to':['" + connectionId + "','wrongConnectionId']}";
+		restClient.rest(HttpMethod.POST, "/api/signal", body, HttpStatus.SC_NOT_ACCEPTABLE); // No valid connectionId
+		body = "{'session':'CUSTOM_SESSION_ID'}";
+		restClient.rest(HttpMethod.POST, "/api/signal", body, HttpStatus.SC_OK);
+		user.getEventManager().waitUntilEventReaches("signal", 2);
+		body = "{'session':'CUSTOM_SESSION_ID','to':[],'type':'server1','data':'SERVER EVENT!'}";
+		restClient.rest(HttpMethod.POST, "/api/signal", body, HttpStatus.SC_OK);
+		user.getEventManager().waitUntilEventReaches("signal:server1", 2);
+		body = "{'session':'CUSTOM_SESSION_ID','to':['" + connectionId + "'],'type':'server2','data':'SERVER EVENT!'}";
+		restClient.rest(HttpMethod.POST, "/api/signal", body, HttpStatus.SC_OK);
+		user.getEventManager().waitUntilEventReaches("signal:server2", 1);
+		Assert.assertEquals("", 1, user.getDriver()
+				.findElements(By.xpath("//*[text()='server - signal:server2 - SERVER EVENT!']")).size());
 
 		/** DELETE /api/sessions/<SESSION_ID>/connection/<CONNECTION_ID> **/
 		restClient.rest(HttpMethod.DELETE, "/api/sessions/NOT_EXISTS/connection/NOT_EXISTS", HttpStatus.SC_BAD_REQUEST);
 		restClient.rest(HttpMethod.DELETE, "/api/sessions/CUSTOM_SESSION_ID/connection/NOT_EXISTS",
 				HttpStatus.SC_NOT_FOUND);
-		String connectionId = ((org.json.JSONObject) res.getJSONObject("connections").getJSONArray("content").get(0))
-				.getString("connectionId");
 		restClient.rest(HttpMethod.DELETE, "/api/sessions/CUSTOM_SESSION_ID/connection/" + connectionId,
 				HttpStatus.SC_NO_CONTENT);
 
@@ -2573,16 +2630,14 @@ public class OpenViduTestAppE2eTest {
 		restClient.rest(HttpMethod.DELETE, "/api/sessions/CUSTOM_SESSION_ID", HttpStatus.SC_NO_CONTENT);
 
 		// GET /api/sessions should return empty again
-		returnValues = new HashMap<>();
-		returnValues.put("numberOfElements", new Integer(0));
-		returnValues.put("content", "[]");
-		restClient.rest(HttpMethod.GET, "/api/sessions", null, HttpStatus.SC_OK, true, returnValues);
+		restClient.rest(HttpMethod.GET, "/api/sessions", null, HttpStatus.SC_OK, true,
+				ImmutableMap.of("numberOfElements", new Integer(0), "content", new JsonArray()));
 
 		/** GET /config **/
 		restClient.rest(HttpMethod.GET, "/config", null, HttpStatus.SC_OK, true,
 				"{'version':'STR','openviduPublicurl':'STR','openviduCdr':false,'maxRecvBandwidth':0,'minRecvBandwidth':0,'maxSendBandwidth':0,'minSendBandwidth':0,'openviduRecording':false,"
 						+ "'openviduRecordingVersion':'STR','openviduRecordingPath':'STR','openviduRecordingPublicAccess':false,'openviduRecordingNotification':'STR',"
-						+ "'openviduRecordingCustomLayout':'STR','openviduRecordingAutostopTimeout':0,'openviduWebhook':false,'openviduWebhookEndpoint':'STR','openviduWebhookHeaders':[],'openviduWebhookEvents':[],}");
+						+ "'openviduRecordingCustomLayout':'STR','openviduRecordingAutostopTimeout':0,'openviduWebhook':false,'openviduWebhookEndpoint':'STR','openviduWebhookHeaders':[],'openviduWebhookEvents':[], 'kmsUris':[]}");
 	}
 
 	@Test
@@ -2593,6 +2648,7 @@ public class OpenViduTestAppE2eTest {
 
 		log.info("Kurento reconnect test");
 
+		OV.fetch();
 		List<Session> sessions = OV.getActiveSessions();
 		Assert.assertEquals("Expected no active sessions but found " + sessions.size(), 0, sessions.size());
 
@@ -2683,8 +2739,10 @@ public class OpenViduTestAppE2eTest {
 					reason);
 			latch.countDown();
 		});
-		this.restartKms();
+
 		long recEndTime = System.currentTimeMillis();
+		this.restartKms();
+
 		user.getEventManager().waitUntilEventReaches("recordingStopped", 2);
 		user.getEventManager().waitUntilEventReaches("streamDestroyed", 2);
 		if (!latch.await(5000, TimeUnit.MILLISECONDS)) {
@@ -2711,7 +2769,9 @@ public class OpenViduTestAppE2eTest {
 
 		WebElement pubBtn = user.getDriver().findElements(By.cssSelector("#openvidu-instance-1 .pub-btn")).get(0);
 		pubBtn.click();
-		user.getEventManager().waitUntilEventReaches("streamDestroyed", 3); // This is not real, only in testapp
+		// This is not real, only in testapp (user is not streaming media after KMS
+		// restarted)
+		user.getEventManager().waitUntilEventReaches("streamDestroyed", 3);
 		pubBtn.click();
 		user.getEventManager().waitUntilEventReaches("streamCreated", 4);
 		user.getEventManager().waitUntilEventReaches("streamPlaying", 4);
@@ -2732,17 +2792,17 @@ public class OpenViduTestAppE2eTest {
 	void webhookTest() throws Exception {
 		isRecordingTest = true;
 
-		setupBrowser("chrome");
+		setupChromeWithFakeVideo(Paths.get("/opt/openvidu/barcode.y4m"));
 
 		log.info("Webhook test");
 
 		CountDownLatch initLatch = new CountDownLatch(1);
-		CustomWebhook.main(new String[0], initLatch);
+		io.openvidu.test.browsers.utils.CustomWebhook.main(new String[0], initLatch);
 
 		try {
 
 			if (!initLatch.await(30, TimeUnit.SECONDS)) {
-				Assert.fail("Tiemout waiting for webhook springboot app to start");
+				Assert.fail("Timeout waiting for webhook springboot app to start");
 				CustomWebhook.shutDown();
 				return;
 			}
@@ -2758,16 +2818,31 @@ public class OpenViduTestAppE2eTest {
 			Thread.sleep(500);
 			user.getDriver().findElement(By.id("option-INDIVIDUAL")).click();
 			Thread.sleep(500);
+
+			WebElement allowedFilterInput = user.getDriver().findElement(By.id("allowed-filter-input"));
+			allowedFilterInput.clear();
+			allowedFilterInput.sendKeys("ZBarFilter");
+			user.getDriver().findElement(By.id("add-allowed-filter-btn")).click();
+
 			user.getDriver().findElement(By.id("save-btn")).click();
 			Thread.sleep(1000);
 
 			user.getDriver().findElement(By.className("join-btn")).click();
 
-			CustomWebhook.waitForEvent("sessionCreated", 2);
-			CustomWebhook.waitForEvent("participantJoined", 2);
-			CustomWebhook.waitForEvent("webrtcConnectionCreated", 2);
-			JsonObject event = CustomWebhook.waitForEvent("recordingStatusChanged", 10);
+			JsonObject event = CustomWebhook.waitForEvent("sessionCreated", 2);
+			Assert.assertEquals("Wrong number of properties in event 'sessionCreated'", 2 + 1, event.keySet().size());
 
+			event = CustomWebhook.waitForEvent("participantJoined", 2);
+			Assert.assertEquals("Wrong number of properties in event 'participantJoined'", 7 + 1,
+					event.keySet().size());
+
+			event = CustomWebhook.waitForEvent("webrtcConnectionCreated", 2);
+			Assert.assertEquals("Wrong number of properties in event 'webrtcConnectionCreated'", 10 + 1,
+					event.keySet().size());
+
+			event = CustomWebhook.waitForEvent("recordingStatusChanged", 10);
+			Assert.assertEquals("Wrong number of properties in event 'recordingStatusChanged'", 11 + 1,
+					event.keySet().size());
 			Assert.assertEquals("Wrong recording status in webhook event", "started",
 					event.get("status").getAsString());
 			Assert.assertEquals("Wrong recording outputMode in webhook event", "INDIVIDUAL",
@@ -2777,6 +2852,30 @@ public class OpenViduTestAppE2eTest {
 			Assert.assertEquals("Wrong recording startTime/timestamp in webhook event",
 					event.get("startTime").getAsLong(), event.get("timestamp").getAsLong());
 			Assert.assertNull("Wrong recording reason in webhook event (should be null)", event.get("reason"));
+
+			// Filter event webhook
+			user.getDriver().findElement(By.cssSelector("#openvidu-instance-0 .filter-btn")).click();
+			Thread.sleep(500);
+			WebElement input = user.getDriver().findElement(By.id("filter-type-field"));
+			input.clear();
+			input.sendKeys("ZBarFilter");
+			input = user.getDriver().findElement(By.id("filter-options-field"));
+			input.clear();
+			input.sendKeys("{}");
+			user.getDriver().findElement(By.id("apply-filter-btn")).click();
+			user.getEventManager().waitUntilEventReaches("streamPropertyChanged", 1);
+
+			// Apply listener
+			input = user.getDriver().findElement(By.id("filter-event-type-field"));
+			input.clear();
+			input.sendKeys("CodeFound");
+			user.getDriver().findElement(By.id("sub-filter-event-btn")).click();
+			user.getWaiter().until(ExpectedConditions.attributeContains(By.id("filter-response-text-area"), "value",
+					"Filter event listener added"));
+			CustomWebhook.waitForEvent("filterEventDispatched", 2);
+			user.getDriver().findElement(By.id("unsub-filter-event-btn")).click();
+			user.getDriver().findElement(By.id("close-dialog-btn")).click();
+			Thread.sleep(500);
 
 			user.getDriver().findElement(By.id("add-user-btn")).click();
 			user.getDriver().findElement(By.cssSelector("#openvidu-instance-1 .join-btn")).click();
@@ -2805,6 +2904,8 @@ public class OpenViduTestAppE2eTest {
 			Assert.assertEquals("Wrong number of recording entities", 1, recs.size());
 			Recording rec = recs.get(0);
 
+			Assert.assertEquals("Wrong number of properties in event 'recordingStatusChanged'", 12 + 1,
+					event.keySet().size());
 			Assert.assertEquals("Wrong recording status in webhook event", "stopped",
 					event.get("status").getAsString());
 			Assert.assertEquals("Wrong recording outputMode in webhook event", 0, event.get("size").getAsLong());
@@ -2821,6 +2922,8 @@ public class OpenViduTestAppE2eTest {
 			Assert.assertEquals("Wrong number of recording entities", 1, recs.size());
 			rec = recs.get(0);
 
+			Assert.assertEquals("Wrong number of properties in event 'recordingStatusChanged'", 12 + 1,
+					event.keySet().size());
 			Assert.assertEquals("Wrong recording status in webhook event", "ready", event.get("status").getAsString());
 			Assert.assertTrue("Wrong recording outputMode in webhook event", event.get("size").getAsLong() > 0);
 			Assert.assertTrue("Wrong recording outputMode in webhook event", event.get("duration").getAsLong() > 0);
@@ -2829,7 +2932,261 @@ public class OpenViduTestAppE2eTest {
 			Assert.assertEquals("Wrong recording reason in webhook event", rec.getCreatedAt(),
 					event.get("startTime").getAsLong());
 
-			CustomWebhook.waitForEvent("sessionDestroyed", 2);
+			event = CustomWebhook.waitForEvent("sessionDestroyed", 2);
+			Assert.assertEquals("Wrong number of properties in event 'sessionDestroyed'", 5 + 1, event.keySet().size());
+			Assert.assertEquals("Wrong session destroyed reason in webhook event", "sessionClosedByServer",
+					event.get("reason").getAsString());
+
+		} finally {
+			CustomWebhook.shutDown();
+		}
+	}
+
+	@Test
+	@DisplayName("IP camera test")
+	void ipCameraTest() throws Exception {
+		isRecordingTest = true;
+
+		log.info("IP camera test");
+
+		CountDownLatch initLatch = new CountDownLatch(1);
+		io.openvidu.test.browsers.utils.CustomWebhook.main(new String[0], initLatch);
+
+		try {
+
+			if (!initLatch.await(30, TimeUnit.SECONDS)) {
+				Assert.fail("Timeout waiting for webhook springboot app to start");
+				CustomWebhook.shutDown();
+				return;
+			}
+
+			// Extra wait time for the webhook endpoint to be ready
+			Thread.sleep(3000);
+
+			CustomHttpClient restClient = new CustomHttpClient(OPENVIDU_URL, "OPENVIDUAPP", OPENVIDU_SECRET);
+
+			// Wrong session [404]
+			restClient.rest(HttpMethod.POST, "/api/sessions/WRONG_SESSION/connection", "{}", HttpStatus.SC_NOT_FOUND);
+
+			// Init a session and publish IP camera AS FIRST PARTICIPANT
+			restClient.rest(HttpMethod.POST, "/api/sessions", "{'customSessionId':'IP_CAM_SESSION'}", HttpStatus.SC_OK,
+					true, "{'id': 'STR', 'createdAt': 0}");
+
+			// No rtspUri [400]
+			restClient.rest(HttpMethod.POST, "/api/sessions/IP_CAM_SESSION/connection", "{}",
+					HttpStatus.SC_BAD_REQUEST);
+
+			// Wrong rtspUri (invalid url format) [400]
+			restClient.rest(HttpMethod.POST, "/api/sessions/IP_CAM_SESSION/connection", "{'rtspUri': 'NOT_A_URL'}",
+					HttpStatus.SC_BAD_REQUEST);
+
+			// Publish IP camera. Dummy URL because no user will subscribe to it [200]
+			String ipCamBody = "{'type':'IPCAM','rtspUri':'rtsp://dummyurl.com','adaptativeBitrate':true,'onlyPlayWithSubscribers':true,'data':'MY_IP_CAMERA'}";
+			JsonObject response = restClient.rest(HttpMethod.POST, "/api/sessions/IP_CAM_SESSION/connection", ipCamBody,
+					HttpStatus.SC_OK, true,
+					"{'connectionId':'STR','createdAt':0,'location':'STR','platform':'STR','role':'STR','serverData':'STR','clientData':'STR','publishers':[],'subscribers':[]}");
+
+			CustomWebhook.waitForEvent("sessionCreated", 1);
+			CustomWebhook.waitForEvent("participantJoined", 1);
+			CustomWebhook.waitForEvent("webrtcConnectionCreated", 1);
+
+			Assert.assertEquals("Wrong serverData property", "MY_IP_CAMERA", response.get("serverData").getAsString());
+			Assert.assertEquals("Wrong platform property", "IPCAM", response.get("platform").getAsString());
+			Assert.assertEquals("Wrong role property", "PUBLISHER", response.get("role").getAsString());
+
+			Assert.assertEquals("Wrong number of publishers in IPCAM participant", 1,
+					response.get("publishers").getAsJsonArray().size());
+			JsonObject ipCamPublisher = response.get("publishers").getAsJsonArray().get(0).getAsJsonObject();
+			Assert.assertEquals("Wrong number of properties in IPCAM publisher", 4, ipCamPublisher.size());
+			Assert.assertEquals("Wrong rtspUri property", "rtsp://dummyurl.com",
+					ipCamPublisher.get("rtspUri").getAsString());
+			JsonObject mediaOptions = ipCamPublisher.get("mediaOptions").getAsJsonObject();
+			Assert.assertEquals("Wrong number of properties in MediaOptions", 10, mediaOptions.size());
+			Assert.assertTrue("Wrong adaptativeBitrate property", mediaOptions.get("adaptativeBitrate").getAsBoolean());
+			Assert.assertTrue("Wrong onlyPlayWithSubscribers property",
+					mediaOptions.get("onlyPlayWithSubscribers").getAsBoolean());
+
+			// Can't delete the stream [405]
+			restClient.rest(HttpMethod.DELETE,
+					"/api/sessions/IP_CAM_SESSION/stream/" + ipCamPublisher.get("streamId").getAsString(),
+					HttpStatus.SC_METHOD_NOT_ALLOWED);
+
+			// Can delete the connection [204]
+			restClient.rest(HttpMethod.DELETE,
+					"/api/sessions/IP_CAM_SESSION/connection/" + response.get("connectionId").getAsString(),
+					HttpStatus.SC_NO_CONTENT);
+
+			response = CustomWebhook.waitForEvent("webrtcConnectionDestroyed", 1);
+			Assert.assertEquals("Wrong reason in webrtcConnectionDestroyed event", "forceDisconnectByServer",
+					response.get("reason").getAsString());
+			response = CustomWebhook.waitForEvent("participantLeft", 1);
+			Assert.assertEquals("Wrong reason in participantLeft event", "forceDisconnectByServer",
+					response.get("reason").getAsString());
+			CustomWebhook.waitForEvent("sessionDestroyed", 1);
+
+			setupBrowser("chrome");
+
+			// Record a session to get an MP4 file
+
+			// Init a moderator participant
+			user.getDriver().findElement(By.id("add-user-btn")).click();
+			user.getDriver().findElement(By.id("session-settings-btn-0")).click();
+			Thread.sleep(1000);
+			user.getDriver().findElement(By.id("radio-btn-mod")).click();
+			user.getDriver().findElement(By.id("save-btn")).click();
+			Thread.sleep(1000);
+
+			user.getDriver().findElement(By.className("join-btn")).click();
+			user.getEventManager().waitUntilEventReaches("connectionCreated", 1);
+			user.getEventManager().waitUntilEventReaches("accessAllowed", 1);
+			user.getEventManager().waitUntilEventReaches("streamCreated", 1);
+			user.getEventManager().waitUntilEventReaches("streamPlaying", 1);
+			final int numberOfVideos = user.getDriver().findElements(By.tagName("video")).size();
+			Assert.assertEquals("Expected 1 video but found " + numberOfVideos, 1, numberOfVideos);
+			Assert.assertTrue("Video was expected to have audio and video tracks", user.getEventManager()
+					.assertMediaTracks(user.getDriver().findElements(By.tagName("video")), true, true));
+
+			CustomWebhook.waitForEvent("sessionCreated", 1);
+			CustomWebhook.waitForEvent("participantJoined", 1);
+			CustomWebhook.waitForEvent("webrtcConnectionCreated", 1);
+
+			// Composed recording to get an MP4 file AUDIO + VIDEO
+			restClient.rest(HttpMethod.POST, "/api/recordings/start",
+					"{'session':'TestSession','name':'audioVideo','hasAudio':true,'hasVideo':true}", HttpStatus.SC_OK);
+			user.getEventManager().waitUntilEventReaches("recordingStarted", 1); // Started
+			CustomWebhook.waitForEvent("recordingStatusChanged", 1);
+			Thread.sleep(4000);
+			restClient.rest(HttpMethod.POST, "/api/recordings/stop/TestSession", HttpStatus.SC_OK);
+			user.getEventManager().waitUntilEventReaches("recordingStopped", 1);
+			CustomWebhook.waitForEvent("recordingStatusChanged", 1); // Stopped
+			CustomWebhook.waitForEvent("recordingStatusChanged", 1); // Ready
+
+			// Composed recording to get an MP4 file ONLY VIDEO
+			restClient.rest(HttpMethod.POST, "/api/recordings/start",
+					"{'session':'TestSession','name':'videoOnly','hasAudio':false,'hasVideo':true}", HttpStatus.SC_OK);
+			user.getEventManager().waitUntilEventReaches("recordingStarted", 1); // Started
+			CustomWebhook.waitForEvent("recordingStatusChanged", 1); // Started
+			Thread.sleep(4000);
+			restClient.rest(HttpMethod.POST, "/api/recordings/stop/TestSession-1", HttpStatus.SC_OK);
+			user.getEventManager().waitUntilEventReaches("recordingStopped", 1);
+			CustomWebhook.waitForEvent("recordingStatusChanged", 1); // Stopped
+			CustomWebhook.waitForEvent("recordingStatusChanged", 1); // Ready
+
+			// Publish the MP4 file as an IPCAM
+			String recPath = restClient.rest(HttpMethod.GET, "/config", HttpStatus.SC_OK).get("openviduRecordingPath")
+					.getAsString();
+			recPath = recPath.endsWith("/") ? recPath : (recPath + "/");
+			String fullRecordingPath = "file://" + recPath + "TestSession/audioVideo.mp4";
+			ipCamBody = "{'type':'IPCAM','rtspUri':'" + fullRecordingPath
+					+ "','adaptativeBitrate':true,'onlyPlayWithSubscribers':true,'data':'MY_IP_CAMERA'}";
+
+			restClient.rest(HttpMethod.POST, "/api/sessions/TestSession/connection", ipCamBody, HttpStatus.SC_OK, true,
+					"{'connectionId':'STR','createdAt':0,'location':'STR','platform':'STR','role':'STR','serverData':'STR','clientData':'STR','publishers':[],'subscribers':[]}");
+
+			user.getEventManager().waitUntilEventReaches("connectionCreated", 2);
+			user.getEventManager().waitUntilEventReaches("streamCreated", 2);
+			user.getEventManager().waitUntilEventReaches("streamPlaying", 2);
+
+			CustomWebhook.waitForEvent("participantJoined", 1);
+			CustomWebhook.waitForEvent("webrtcConnectionCreated", 1);
+			CustomWebhook.waitForEvent("webrtcConnectionCreated", 1);
+
+			// A moderator should be able to evict the IPCAM participant
+			user.getDriver().findElement(By.cssSelector("#openvidu-instance-0 .force-disconnect-btn")).click();
+			user.getEventManager().waitUntilEventReaches("streamDestroyed", 1);
+			user.getEventManager().waitUntilEventReaches("connectionDestroyed", 1);
+			response = CustomWebhook.waitForEvent("webrtcConnectionDestroyed", 1);
+			Assert.assertEquals("Wrong reason in participantLeft event", "forceDisconnectByUser",
+					response.get("reason").getAsString());
+			response = CustomWebhook.waitForEvent("webrtcConnectionDestroyed", 1);
+			Assert.assertEquals("Wrong reason in participantLeft event", "forceDisconnectByUser",
+					response.get("reason").getAsString());
+			response = CustomWebhook.waitForEvent("participantLeft", 1);
+			Assert.assertEquals("Wrong reason in participantLeft event", "forceDisconnectByUser",
+					response.get("reason").getAsString());
+			user.getWaiter().until(ExpectedConditions.numberOfElementsToBe(By.tagName("video"), 1));
+
+			// Publish again the IPCAM
+			response = restClient.rest(HttpMethod.POST, "/api/sessions/TestSession/connection", ipCamBody,
+					HttpStatus.SC_OK, true,
+					"{'connectionId':'STR','createdAt':0,'location':'STR','platform':'STR','role':'STR','serverData':'STR','clientData':'STR','publishers':[],'subscribers':[]}");
+			user.getEventManager().waitUntilEventReaches("connectionCreated", 3);
+			user.getEventManager().waitUntilEventReaches("streamCreated", 3);
+			user.getEventManager().waitUntilEventReaches("streamPlaying", 3);
+			user.getWaiter().until(ExpectedConditions.numberOfElementsToBe(By.tagName("video"), 2));
+
+			String connectionId = response.get("connectionId").getAsString();
+
+			// Removing browser user shouldn't close the session if IPCAM participant
+			// remains
+
+			user.getDriver().findElement(By.id("remove-user-btn")).click();
+			user.getEventManager().waitUntilEventReaches("sessionDisconnected", 1);
+
+			CustomWebhook.waitForEvent("webrtcConnectionDestroyed", 1);
+			CustomWebhook.waitForEvent("webrtcConnectionDestroyed", 1);
+			CustomWebhook.waitForEvent("participantLeft", 1);
+
+			restClient.rest(HttpMethod.GET, "/api/sessions/TestSession", null, HttpStatus.SC_OK);
+
+			// Test IPCAM individual recording (IPCAM audio+video, recording audio+video)
+			response = restClient.rest(HttpMethod.POST, "/api/recordings/start",
+					"{'session':'TestSession','outputMode':'INDIVIDUAL','hasAudio':true,'hasVideo':true}",
+					HttpStatus.SC_OK);
+			String recId = response.get("id").getAsString();
+			CustomWebhook.waitForEvent("recordingStatusChanged", 1); // Started
+
+			Thread.sleep(2000);
+			restClient.rest(HttpMethod.POST, "/api/recordings/stop/" + recId, HttpStatus.SC_OK);
+			CustomWebhook.waitForEvent("recordingStatusChanged", 1); // Stopped
+			CustomWebhook.waitForEvent("recordingStatusChanged", 1); // Ready
+
+			Recording recording = new OpenVidu(OPENVIDU_URL, OPENVIDU_SECRET).getRecording(recId);
+			this.checkIndividualRecording(recPath + recId + "/", recording, 1, "opus", "vp8", true);
+
+			// Test IPCAM individual recording (IPCAM video only, recording audio and video)
+
+			// Disconnect audio+video IPCAM
+			restClient.rest(HttpMethod.DELETE, "/api/sessions/TestSession/connection/" + connectionId,
+					HttpStatus.SC_NO_CONTENT);
+
+			// Session is closed (create new session)
+			CustomWebhook.waitForEvent("webrtcConnectionDestroyed", 1);
+			CustomWebhook.waitForEvent("participantLeft", 1);
+			CustomWebhook.waitForEvent("sessionDestroyed", 1);
+
+			restClient.rest(HttpMethod.POST, "/api/sessions", "{'customSessionId':'TestSession'}", HttpStatus.SC_OK);
+
+			// Publish video only IPCAM
+			fullRecordingPath = "file://" + recPath + "TestSession-1/videoOnly.mp4";
+			ipCamBody = "{'rtspUri':'" + fullRecordingPath + "'}";
+			response = restClient.rest(HttpMethod.POST, "/api/sessions/TestSession/connection", ipCamBody,
+					HttpStatus.SC_OK);
+			CustomWebhook.waitForEvent("sessionCreated", 1);
+			CustomWebhook.waitForEvent("participantJoined", 1);
+			CustomWebhook.waitForEvent("webrtcConnectionCreated", 1);
+
+			// Record audio and video
+			// TODO: THIS SHOULD WORK
+//			response = restClient.rest(HttpMethod.POST, "/api/recordings/start",
+//					"{'session':'TestSession','outputMode':'INDIVIDUAL','hasAudio':true,'hasVideo':true}",
+//					HttpStatus.SC_OK);
+//			recId = response.get("id").getAsString();
+//			CustomWebhook.waitForEvent("recordingStatusChanged", 1); // Started
+//
+//			Thread.sleep(2000);
+//			restClient.rest(HttpMethod.POST, "/api/recordings/stop/TestSession-2", HttpStatus.SC_OK);
+//			CustomWebhook.waitForEvent("recordingStatusChanged", 1); // Stopped
+//			CustomWebhook.waitForEvent("recordingStatusChanged", 1); // Ready
+//
+//			recording = new OpenVidu(OPENVIDU_URL, OPENVIDU_SECRET).getRecording(recId);
+//			this.checkIndividualRecording(recPath + recId + "/", recording, 1, "opus", "vp8", true);
+
+			restClient.rest(HttpMethod.DELETE, "/api/sessions/TestSession", HttpStatus.SC_NO_CONTENT);
+
+			CustomWebhook.waitForEvent("webrtcConnectionDestroyed", 1);
+			CustomWebhook.waitForEvent("participantLeft", 1);
+			CustomWebhook.waitForEvent("sessionDestroyed", 1);
 
 		} finally {
 			CustomWebhook.shutDown();
@@ -2848,7 +3205,7 @@ public class OpenViduTestAppE2eTest {
 			@Override
 			public Boolean apply(WebDriver input) {
 				return element.getAttribute("duration").matches(
-						durationInSeconds - 1 + "\\.[8-9][0-9]{0,5}|" + durationInSeconds + "\\.[0-2][0-9]{0,5}");
+						durationInSeconds - 1 + "\\.[5-9][0-9]{0,5}|" + durationInSeconds + "\\.[0-5][0-9]{0,5}");
 			}
 		};
 	}
@@ -3065,18 +3422,23 @@ public class OpenViduTestAppE2eTest {
 		return colorMap;
 	}
 
-	private void stopKms() {
-		log.info("Stopping KMS");
-		commandLine.executeCommand("sudo kill -9 $(pidof kurento-media-server)");
-	}
-
 	private void startKms() {
 		log.info("Starting KMS");
-		commandLine.executeCommand("/usr/bin/kurento-media-server &> /kms.log &");
+		commandLine.executeCommand("/usr/bin/kurento-media-server &>> /kms.log &");
+	}
+
+	private void stopKms() {
+		log.info("Stopping KMS");
+		commandLine.executeCommand("kill -9 $(pidof kurento-media-server)");
 	}
 
 	private void restartKms() {
 		this.stopKms();
+		try {
+			Thread.sleep(1000);
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
 		this.startKms();
 	}
 

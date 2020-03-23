@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,26 +30,19 @@ import io.openvidu.server.utils.GeoLocation;
 public class FinalUser {
 
 	private String id;
-	private String sessionId;
 	private GeoLocation location;
 	private String platform;
 	private Map<String, ParticipantSummary> connections = new ConcurrentHashMap<>();
 
 	public FinalUser(String id, String sessionId, Participant firstConnection) {
 		this.id = id;
-		this.sessionId = sessionId;
 		this.location = firstConnection.getLocation();
 		this.platform = firstConnection.getPlatform();
-		this.connections.put(firstConnection.getParticipantPublicId(),
-				new ParticipantSummary(this.sessionId, firstConnection));
+		this.connections.put(firstConnection.getParticipantPublicId(), new ParticipantSummary(firstConnection));
 	}
 
 	public String getId() {
 		return id;
-	}
-
-	public String getSessionId() {
-		return sessionId;
 	}
 
 	public GeoLocation getLocation() {
@@ -64,14 +57,14 @@ public class FinalUser {
 		return connections;
 	}
 
-	public void addConnection(Participant participant) {
-		this.connections.put(participant.getParticipantPublicId(), new ParticipantSummary(this.sessionId, participant));
+	public void addConnectionIfAbsent(Participant participant) {
+		this.connections.putIfAbsent(participant.getParticipantPublicId(), new ParticipantSummary(participant));
 	}
 
 	public void setConnection(CDREventParticipant event) {
-		ParticipantSummary oldSummary = this.connections.remove(event.getParticipant().getParticipantPublicId());
-		this.connections.put(event.getParticipant().getParticipantPublicId(),
-				new ParticipantSummary(event, oldSummary));
+		final String participantPublicId = event.getParticipant().getParticipantPublicId();
+		ParticipantSummary oldSummary = this.connections.remove(participantPublicId);
+		this.connections.put(participantPublicId, new ParticipantSummary(event, oldSummary));
 	}
 
 	public JsonObject toJson() {

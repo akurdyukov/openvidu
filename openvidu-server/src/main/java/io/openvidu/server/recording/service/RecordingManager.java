@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,7 +18,6 @@
 package io.openvidu.server.recording.service;
 
 import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -37,6 +36,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
+import javax.annotation.PostConstruct;
+
 import org.apache.commons.io.FileUtils;
 import org.kurento.client.ErrorEvent;
 import org.kurento.client.EventListener;
@@ -48,8 +49,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 
+import com.google.gson.JsonIOException;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
+import com.google.gson.JsonSyntaxException;
 
 import io.openvidu.client.OpenViduException;
 import io.openvidu.client.OpenViduException.Code;
@@ -70,6 +72,8 @@ import io.openvidu.server.recording.Recording;
 import io.openvidu.server.recording.RecordingDownloader;
 import io.openvidu.server.utils.CustomFileManager;
 import io.openvidu.server.utils.DockerManager;
+import io.openvidu.server.utils.JsonUtils;
+import io.openvidu.server.utils.QuarantineKiller;
 
 public class RecordingManager {
 
@@ -95,12 +99,17 @@ public class RecordingManager {
 	private KmsManager kmsManager;
 
 	@Autowired
+	protected QuarantineKiller quarantineKiller;
+
+	@Autowired
 	private CallDetailRecord cdr;
 
 	protected Map<String, Recording> startingRecordings = new ConcurrentHashMap<>();
 	protected Map<String, Recording> startedRecordings = new ConcurrentHashMap<>();
 	protected Map<String, Recording> sessionsRecordings = new ConcurrentHashMap<>();
 	private final Map<String, ScheduledFuture<?>> automaticRecordingStopThreads = new ConcurrentHashMap<>();
+
+	private JsonUtils jsonUtils = new JsonUtils();
 
 	private ScheduledThreadPoolExecutor automaticRecordingStopExecutor = new ScheduledThreadPoolExecutor(
 			Runtime.getRuntime().availableProcessors());
@@ -113,14 +122,42 @@ public class RecordingManager {
 			.asList(new EndReason[] { EndReason.disconnect, EndReason.forceDisconnectByUser,
 					EndReason.forceDisconnectByServer, EndReason.networkDisconnect });
 
+	@PostConstruct
+	public void init() {
+		if (this.openviduConfig.isRecordingModuleEnabled()) {
+			log.info("OpenVidu recording service is enabled");
+			try {
+				this.initializeRecordingManager();
+			} catch (OpenViduException e) {
+				String finalErrorMessage = "";
+				if (e.getCodeValue() == Code.DOCKER_NOT_FOUND.getValue()) {
+					finalErrorMessage = "Error connecting to Docker daemon. Enabling OpenVidu recording module requires Docker";
+				} else if (e.getCodeValue() == Code.RECORDING_PATH_NOT_VALID.getValue()) {
+					finalErrorMessage = "Error initializing recording path \""
+							+ this.openviduConfig.getOpenViduRecordingPath()
+							+ "\" set with system property \"openvidu.recording.path\"";
+				} else if (e.getCodeValue() == Code.RECORDING_FILE_EMPTY_ERROR.getValue()) {
+					finalErrorMessage = "Error initializing recording custom layouts path \""
+							+ this.openviduConfig.getOpenviduRecordingCustomLayout()
+							+ "\" set with system property \"openvidu.recording.custom-layout\"";
+				}
+				log.error(finalErrorMessage + ". Shutting down OpenVidu Server");
+				System.exit(1);
+			}
+		} else {
+			log.info("OpenVidu recording service is disabled");
+		}
+	}
+
 	public void initializeRecordingManager() throws OpenViduException {
 
 		RecordingManager.IMAGE_TAG = openviduConfig.getOpenViduRecordingVersion();
 
 		this.dockerManager = new DockerManager();
-		this.composedRecordingService = new ComposedRecordingService(this, recordingDownloader, openviduConfig, cdr);
+		this.composedRecordingService = new ComposedRecordingService(this, recordingDownloader, openviduConfig, cdr,
+				quarantineKiller);
 		this.singleStreamRecordingService = new SingleStreamRecordingService(this, recordingDownloader, openviduConfig,
-				cdr);
+				cdr, quarantineKiller);
 
 		log.info("Recording module required: Downloading openvidu/openvidu-recording:"
 				+ openviduConfig.getOpenViduRecordingVersion() + " Docker image (350MB aprox)");
@@ -168,7 +205,26 @@ public class RecordingManager {
 		if (dockerManager == null) {
 			this.dockerManager = new DockerManager();
 		}
-		dockerManager.checkDockerEnabled(openviduConfig.getSpringProfile());
+		try {
+			dockerManager.checkDockerEnabled();
+		} catch (OpenViduException e) {
+			String message = e.getMessage();
+			if ("docker".equals(openviduConfig.getSpringProfile())) {
+				final String NEW_LINE = System.getProperty("line.separator");
+				message += ": make sure you include the following flags in your \"docker run\" command:" + NEW_LINE
+						+ "    -e openvidu.recording.path=/YOUR/PATH/TO/VIDEO/FILES" + NEW_LINE
+						+ "    -e MY_UID=$(id -u $USER)" + NEW_LINE + "    -v /var/run/docker.sock:/var/run/docker.sock"
+						+ NEW_LINE + "    -v /YOUR/PATH/TO/VIDEO/FILES:/YOUR/PATH/TO/VIDEO/FILES" + NEW_LINE;
+			} else {
+				message += ": you need Docker CE installed in this machine to enable OpenVidu recording service. "
+						+ "If Docker CE is already installed, make sure to add OpenVidu Server user to "
+						+ "\"docker\" group: " + System.lineSeparator() + "   1) $ sudo usermod -aG docker $USER"
+						+ System.lineSeparator()
+						+ "   2) Log out and log back to the host to reevaluate group membership";
+			}
+			log.error(message);
+			throw e;
+		}
 		this.checkRecordingPaths(openviduRecordingPath, openviduRecordingCustomLayout);
 	}
 
@@ -332,18 +388,16 @@ public class RecordingManager {
 		return this.getAllRecordingsFromHost();
 	}
 
-	public String getFreeRecordingId(String sessionId, String shortSessionId) {
+	public String getFreeRecordingId(String sessionId) {
 		Set<String> recordingIds = this.getRecordingIdsFromHost();
-		String recordingId = shortSessionId;
+		String recordingId = sessionId;
 		boolean isPresent = recordingIds.contains(recordingId);
 		int i = 1;
-
 		while (isPresent) {
-			recordingId = shortSessionId + "-" + i;
+			recordingId = sessionId + "-" + i;
 			i++;
 			isPresent = recordingIds.contains(recordingId);
 		}
-
 		return recordingId;
 	}
 
@@ -384,72 +438,108 @@ public class RecordingManager {
 
 	public Recording getRecordingFromEntityFile(File file) {
 		if (file.isFile() && file.getName().startsWith(RecordingManager.RECORDING_ENTITY_FILE)) {
-			JsonObject json = null;
-			FileReader fr = null;
+			JsonObject json;
 			try {
-				fr = new FileReader(file);
-				json = new JsonParser().parse(fr).getAsJsonObject();
-			} catch (IOException e) {
+				json = jsonUtils.fromFileToJsonObject(file.getAbsolutePath());
+			} catch (JsonIOException | JsonSyntaxException | IOException e) {
+				log.error("Error reading recording entity file {}: {}", file.getAbsolutePath(), (e.getMessage()));
 				return null;
-			} finally {
-				try {
-					fr.close();
-				} catch (Exception e) {
-					log.error("Exception while closing FileReader: {}", e.getMessage());
-				}
 			}
-			return new Recording(json);
+			Recording recording = new Recording(json);
+			if (io.openvidu.java.client.Recording.Status.ready.equals(recording.getStatus())
+					|| io.openvidu.java.client.Recording.Status.failed.equals(recording.getStatus())) {
+				recording.setUrl(getRecordingUrl(recording));
+			}
+			return recording;
 		}
 		return null;
 	}
 
+	public String getRecordingUrl(Recording recording) {
+		return openviduConfig.getFinalUrl() + "recordings/" + recording.getId() + "/" + recording.getName() + "."
+				+ this.getExtensionFromRecording(recording);
+	}
+
+	private String getExtensionFromRecording(Recording recording) {
+		if (io.openvidu.java.client.Recording.OutputMode.INDIVIDUAL.equals(recording.getOutputMode())) {
+			return "zip";
+		} else if (recording.hasVideo()) {
+			return "mp4";
+		} else {
+			return "webm";
+		}
+	}
+
 	public void initAutomaticRecordingStopThread(final Session session) {
 		final String recordingId = this.sessionsRecordings.get(session.getSessionId()).getId();
-		ScheduledFuture<?> future = this.automaticRecordingStopExecutor.schedule(() -> {
 
-			log.info("Stopping recording {} after {} seconds wait (no publisher published before timeout)", recordingId,
-					this.openviduConfig.getOpenviduRecordingAutostopTimeout());
+		this.automaticRecordingStopThreads.computeIfAbsent(session.getSessionId(), f -> {
 
-			if (this.automaticRecordingStopThreads.remove(session.getSessionId()) != null) {
-				if (session.getParticipants().size() == 0 || (session.getParticipants().size() == 1
-						&& session.getParticipantByPublicId(ProtocolElements.RECORDER_PARTICIPANT_PUBLICID) != null)) {
-					// Close session if there are no participants connected (except for RECORDER).
-					// This code won't be executed only when some user reconnects to the session
-					// but never publishing (publishers automatically abort this thread)
-					log.info("Closing session {} after automatic stop of recording {}", session.getSessionId(),
-							recordingId);
-					sessionManager.closeSessionAndEmptyCollections(session, EndReason.automaticStop);
-					sessionManager.showTokens();
+			ScheduledFuture<?> future = this.automaticRecordingStopExecutor.schedule(() -> {
+				log.info("Stopping recording {} after {} seconds wait (no publisher published before timeout)",
+						recordingId, this.openviduConfig.getOpenviduRecordingAutostopTimeout());
+
+				if (this.automaticRecordingStopThreads.remove(session.getSessionId()) != null) {
+
+					boolean alreadyUnlocked = false;
+					try {
+						session.closingLock.writeLock().lock();
+						if (session.isClosed()) {
+							return;
+						}
+
+						if (session.getParticipants().size() == 0 || session.onlyRecorderParticipant()) {
+							// Close session if there are no participants connected (RECORDER does not
+							// count) and publishing
+							log.info("Closing session {} after automatic stop of recording {}", session.getSessionId(),
+									recordingId);
+							sessionManager.closeSessionAndEmptyCollections(session, EndReason.automaticStop, true);
+						} else {
+							// There are users connected, but no one is publishing
+							session.closingLock.writeLock().unlock(); // We don't need the lock if session's not closing
+							alreadyUnlocked = true;
+							log.info(
+									"Automatic stopping recording {}. There are users connected to session {}, but no one is publishing",
+									recordingId, session.getSessionId());
+							this.stopRecording(session, recordingId, EndReason.automaticStop);
+						}
+					} finally {
+						if (!alreadyUnlocked) {
+							session.closingLock.writeLock().unlock();
+						}
+					}
 				} else {
-					this.stopRecording(session, recordingId, EndReason.automaticStop);
+					// This code shouldn't be reachable
+					log.warn("Recording {} was already automatically stopped by a previous thread", recordingId);
 				}
-			} else {
-				// This code is reachable if there already was an automatic stop of a recording
-				// caused by not user publishing within timeout after recording started, and a
-				// new automatic stop thread was started by last user leaving the session
-				log.warn("Recording {} was already automatically stopped by a previous thread", recordingId);
-			}
+			}, this.openviduConfig.getOpenviduRecordingAutostopTimeout(), TimeUnit.SECONDS);
 
-		}, this.openviduConfig.getOpenviduRecordingAutostopTimeout(), TimeUnit.SECONDS);
-		this.automaticRecordingStopThreads.putIfAbsent(session.getSessionId(), future);
+			return future;
+		});
 	}
 
 	public boolean abortAutomaticRecordingStopThread(Session session, EndReason reason) {
 		ScheduledFuture<?> future = this.automaticRecordingStopThreads.remove(session.getSessionId());
 		if (future != null) {
 			boolean cancelled = future.cancel(false);
-			if (session.getParticipants().size() == 0 || (session.getParticipants().size() == 1
-					&& session.getParticipantByPublicId(ProtocolElements.RECORDER_PARTICIPANT_PUBLICID) != null)) {
-				// Close session if there are no participants connected (except for RECORDER).
-				// This code will only be executed if recording is manually stopped during the
-				// automatic stop timeout, so the session must be also closed
-				log.info(
-						"Ongoing recording of session {} was explicetly stopped within timeout for automatic recording stop. Closing session",
-						session.getSessionId());
-				sessionManager.closeSessionAndEmptyCollections(session, reason);
-				sessionManager.showTokens();
+			try {
+				session.closingLock.writeLock().lock();
+				if (session.isClosed()) {
+					return false;
+				}
+				if (session.getParticipants().size() == 0 || session.onlyRecorderParticipant()) {
+					// Close session if there are no participants connected (except for RECORDER).
+					// This code will only be executed if recording is manually stopped during the
+					// automatic stop timeout, so the session must be also closed
+					log.info(
+							"Ongoing recording of session {} was explicetly stopped within timeout for automatic recording stop. Closing session",
+							session.getSessionId());
+					sessionManager.closeSessionAndEmptyCollections(session, reason, false);
+				}
+				return cancelled;
+			} finally {
+				session.closingLock.writeLock().unlock();
 			}
-			return cancelled;
 		} else {
 			return true;
 		}
@@ -535,56 +625,63 @@ public class RecordingManager {
 		final String testFilePath = testFolderPath + "/TEST_RECORDING_PATH.webm";
 
 		// Check Kurento Media Server write permissions in recording path
-		MediaPipeline pipeline = this.kmsManager.getLessLoadedKms().getKurentoClient().createMediaPipeline();
-		RecorderEndpoint recorder = new RecorderEndpoint.Builder(pipeline, "file://" + testFilePath).build();
+		if (this.kmsManager.getKmss().isEmpty()) {
+			log.warn("No KMSs were defined in kms.uris array. Recording path check aborted");
+		} else {
 
-		final AtomicBoolean kurentoRecorderError = new AtomicBoolean(false);
+			MediaPipeline pipeline = this.kmsManager.getLessLoadedAndRunningKms().getKurentoClient()
+					.createMediaPipeline();
+			RecorderEndpoint recorder = new RecorderEndpoint.Builder(pipeline, "file://" + testFilePath).build();
 
-		recorder.addErrorListener(new EventListener<ErrorEvent>() {
-			@Override
-			public void onEvent(ErrorEvent event) {
-				if (event.getErrorCode() == 6) {
-					// KMS write permissions error
-					kurentoRecorderError.compareAndSet(false, true);
+			final AtomicBoolean kurentoRecorderError = new AtomicBoolean(false);
+
+			recorder.addErrorListener(new EventListener<ErrorEvent>() {
+				@Override
+				public void onEvent(ErrorEvent event) {
+					if (event.getErrorCode() == 6) {
+						// KMS write permissions error
+						kurentoRecorderError.compareAndSet(false, true);
+					}
 				}
+			});
+
+			recorder.record();
+
+			try {
+				// Give the error event some time to trigger if necessary
+				Thread.sleep(500);
+			} catch (InterruptedException e1) {
+				e1.printStackTrace();
 			}
-		});
 
-		recorder.record();
+			if (kurentoRecorderError.get()) {
+				String errorMessage = "The recording path \"" + openviduRecordingPath
+						+ "\" is not valid. Reason: Kurento Media Server needs write permissions. Try running command \"sudo chmod 777 "
+						+ openviduRecordingPath + "\"";
+				log.error(errorMessage);
+				throw new OpenViduException(Code.RECORDING_PATH_NOT_VALID, errorMessage);
+			}
 
-		try {
-			// Give the error event some time to trigger if necessary
-			Thread.sleep(500);
-		} catch (InterruptedException e1) {
-			e1.printStackTrace();
-		}
+			recorder.stop();
+			recorder.release();
+			pipeline.release();
 
-		if (kurentoRecorderError.get()) {
-			String errorMessage = "The recording path \"" + openviduRecordingPath
-					+ "\" is not valid. Reason: Kurento Media Server needs write permissions. Try running command \"sudo chmod 777 "
-					+ openviduRecordingPath + "\"";
-			log.error(errorMessage);
-			throw new OpenViduException(Code.RECORDING_PATH_NOT_VALID, errorMessage);
-		}
+			log.info("Kurento Media Server has write permissions on recording path: {}", openviduRecordingPath);
 
-		recorder.stop();
-		recorder.release();
-		pipeline.release();
-
-		log.info("Kurento Media Server has write permissions on recording path: {}", openviduRecordingPath);
-
-		try {
-			new CustomFileManager().deleteFolder(testFolderPath);
-			log.info("OpenVidu Server has write permissions over files created by Kurento Media Server");
-		} catch (IOException e) {
-			String errorMessage = "The recording path \"" + openviduRecordingPath
-					+ "\" is not valid. Reason: OpenVidu Server does not have write permissions over files created by Kurento Media Server. "
-					+ "Try running Kurento Media Server as user \"" + System.getProperty("user.name")
-					+ "\" or run OpenVidu Server as superuser";
-			log.error(errorMessage);
-			log.error("Be aware that a folder \"{}\" was created and should be manually deleted (\"sudo rm -rf {}\")",
-					testFolderPath, testFolderPath);
-			throw new OpenViduException(Code.RECORDING_PATH_NOT_VALID, errorMessage);
+			try {
+				new CustomFileManager().deleteFolder(testFolderPath);
+				log.info("OpenVidu Server has write permissions over files created by Kurento Media Server");
+			} catch (IOException e) {
+				String errorMessage = "The recording path \"" + openviduRecordingPath
+						+ "\" is not valid. Reason: OpenVidu Server does not have write permissions over files created by Kurento Media Server. "
+						+ "Try running Kurento Media Server as user \"" + System.getProperty("user.name")
+						+ "\" or run OpenVidu Server as superuser";
+				log.error(errorMessage);
+				log.error(
+						"Be aware that a folder \"{}\" was created and should be manually deleted (\"sudo rm -rf {}\")",
+						testFolderPath, testFolderPath);
+				throw new OpenViduException(Code.RECORDING_PATH_NOT_VALID, errorMessage);
+			}
 		}
 
 		if (openviduConfig.openviduRecordingCustomLayoutChanged(openviduRecordingCustomLayout)) {

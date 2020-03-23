@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -117,6 +117,10 @@ public class ProtocolElements {
 	public static final String FILTEREVENTLISTENER_FILTERTYPE_PARAM = "filterType";
 	public static final String FILTEREVENTLISTENER_EVENTTYPE_PARAM = "eventType";
 	public static final String FILTEREVENTLISTENER_DATA_PARAM = "data";
+
+	public static final String RECONNECTSTREAM_METHOD = "reconnectStream";
+	public static final String RECONNECTSTREAM_STREAM_PARAM = "stream";
+	public static final String RECONNECTSTREAM_SDPOFFER_PARAM = "sdpOffer";
 
 	// ---------------------------- SERVER RESPONSES & EVENTS -----------------
 

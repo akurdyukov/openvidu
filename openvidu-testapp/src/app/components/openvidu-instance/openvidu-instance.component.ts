@@ -118,7 +118,9 @@ export class OpenviduInstanceComponent implements OnInit, OnChanges, OnDestroy {
     recordingStopped: true,
     signal: true,
     publisherStartSpeaking: false,
-    publisherStopSpeaking: false
+    publisherStopSpeaking: false,
+    reconnecting: true,
+    reconnected: true
   };
 
   // Session properties dialog
@@ -222,7 +224,9 @@ export class OpenviduInstanceComponent implements OnInit, OnChanges, OnDestroy {
       recordingStopped: false,
       signal: false,
       publisherStartSpeaking: true,
-      publisherStopSpeaking: true
+      publisherStopSpeaking: true,
+      reconnecting: true,
+      reconnected: true
     }, true);
 
     this.session.connect(token, this.clientData)
@@ -401,7 +405,9 @@ export class OpenviduInstanceComponent implements OnInit, OnChanges, OnDestroy {
       this.session.off('signal');
       if (this.sessionEvents.signal) {
         this.session.on('signal', (event: SignalEvent) => {
-          this.updateEventList('signal', event.from.connectionId + '-' + event.data, event);
+          this.updateEventList('signal', !!event.from ? event.from.connectionId : 'server'
+            + ' - ' + event.type
+            + ' - ' + event.data, event);
         });
       }
     }
@@ -443,6 +449,25 @@ export class OpenviduInstanceComponent implements OnInit, OnChanges, OnDestroy {
         });
       }
     }
+
+    if (this.sessionEvents.reconnecting !== oldValues.reconnecting || firstTime) {
+      this.session.off('reconnecting');
+      if (this.sessionEvents.reconnecting) {
+        this.session.on('reconnecting', () => {
+          this.updateEventList('reconnecting', '', undefined);
+        });
+      }
+    }
+
+    if (this.sessionEvents.reconnected !== oldValues.reconnected || firstTime) {
+      this.session.off('reconnected');
+      if (this.sessionEvents.reconnected) {
+        this.session.on('reconnected', () => {
+          this.updateEventList('reconnected', '', undefined);
+        });
+      }
+    }
+
   }
 
   syncInitPublisher() {
@@ -478,11 +503,13 @@ export class OpenviduInstanceComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   initGrayVideo(): void {
+
     this.OV.getUserMedia(
       {
+        audioSource: undefined,
         videoSource: undefined,
         resolution: '1280x720',
-        frameRate: 30,
+        frameRate: 3,
       }
     )
       .then((mediaStream: MediaStream) => {
@@ -505,18 +532,17 @@ export class OpenviduInstanceComponent implements OnInit, OnChanges, OnDestroy {
           loop();
         });
         const grayVideoTrack: MediaStreamTrack = (<MediaStream>canvas.captureStream(30)).getVideoTracks()[0];
-        this.publisher = this.OV.initPublisher(
-          document.body,
-          {
-            audioSource: false,
-            videoSource: grayVideoTrack,
-            insertMode: VideoInsertMode.APPEND
-          });
-        this.session.publish(this.publisher).catch((error: OpenViduError) => {
-          console.error(error);
-          this.session.unpublish(this.publisher);
+        this.OV.getUserMedia({
+          audioSource: false,
+          videoSource: grayVideoTrack
+        }).then(mediastream => {
+          this.publisher.replaceTrack(mediastream.getVideoTracks()[0])
+            .then(() => console.log('New track is being published'))
+            .catch(error => {
+              console.error('Error replacing track');
+              console.error(error);
+            });
         });
-
       })
       .catch(error => {
         console.error(error);
@@ -594,7 +620,9 @@ export class OpenviduInstanceComponent implements OnInit, OnChanges, OnDestroy {
       recordingStopped: this.sessionEvents.recordingStopped,
       signal: this.sessionEvents.signal,
       publisherStartSpeaking: this.sessionEvents.publisherStartSpeaking,
-      publisherStopSpeaking: this.sessionEvents.publisherStopSpeaking
+      publisherStopSpeaking: this.sessionEvents.publisherStopSpeaking,
+      reconnecting: this.sessionEvents.reconnecting,
+      reconnected: this.sessionEvents.reconnected
     };
 
     const dialogRef = this.dialog.open(EventsDialogComponent, {
@@ -624,7 +652,9 @@ export class OpenviduInstanceComponent implements OnInit, OnChanges, OnDestroy {
         recordingStopped: result.recordingStopped,
         signal: result.signal,
         publisherStartSpeaking: result.publisherStartSpeaking,
-        publisherStopSpeaking: result.publisherStopSpeaking
+        publisherStopSpeaking: result.publisherStopSpeaking,
+        reconnecting: result.reconnecting,
+        reconnected: result.reconnected
       };
       document.getElementById('session-events-btn-' + this.index).classList.remove('cdk-program-focused');
     });

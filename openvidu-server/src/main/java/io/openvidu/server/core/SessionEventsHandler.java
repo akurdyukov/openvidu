@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 
+import org.kurento.client.GenericMediaEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -312,15 +313,27 @@ public class SessionEventsHandler {
 
 	public void onSendMessage(Participant participant, JsonObject message, Set<Participant> participants,
 			Integer transactionId, OpenViduException error) {
-		if (error != null) {
-			rpcNotificationService.sendErrorResponse(participant.getParticipantPrivateId(), transactionId, null, error);
-			return;
+
+		boolean isRpcCall = transactionId != null;
+		if (isRpcCall) {
+			if (error != null) {
+				rpcNotificationService.sendErrorResponse(participant.getParticipantPrivateId(), transactionId, null,
+						error);
+				return;
+			}
 		}
 
 		JsonObject params = new JsonObject();
-		params.addProperty(ProtocolElements.PARTICIPANTSENDMESSAGE_DATA_PARAM, message.get("data").getAsString());
-		params.addProperty(ProtocolElements.PARTICIPANTSENDMESSAGE_FROM_PARAM, participant.getParticipantPublicId());
-		params.addProperty(ProtocolElements.PARTICIPANTSENDMESSAGE_TYPE_PARAM, message.get("type").getAsString());
+		if (message.has("data")) {
+			params.addProperty(ProtocolElements.PARTICIPANTSENDMESSAGE_DATA_PARAM, message.get("data").getAsString());
+		}
+		if (message.has("type")) {
+			params.addProperty(ProtocolElements.PARTICIPANTSENDMESSAGE_TYPE_PARAM, message.get("type").getAsString());
+		}
+		if (participant != null) {
+			params.addProperty(ProtocolElements.PARTICIPANTSENDMESSAGE_FROM_PARAM,
+					participant.getParticipantPublicId());
+		}
 
 		Set<String> toSet = new HashSet<String>();
 
@@ -344,20 +357,22 @@ public class SessionEventsHandler {
 		} else {
 			Set<String> participantPublicIds = participants.stream().map(Participant::getParticipantPublicId)
 					.collect(Collectors.toSet());
-			for (String to : toSet) {
-				if (participantPublicIds.contains(to)) {
+			if (participantPublicIds.containsAll(toSet)) {
+				for (String to : toSet) {
 					Optional<Participant> p = participants.stream().filter(x -> to.equals(x.getParticipantPublicId()))
 							.findFirst();
 					rpcNotificationService.sendNotification(p.get().getParticipantPrivateId(),
 							ProtocolElements.PARTICIPANTSENDMESSAGE_METHOD, params);
-				} else {
-					throw new OpenViduException(Code.SIGNAL_TO_INVALID_ERROR_CODE,
-							"Signal \"to\" field invalid format: Connection [" + to + "] does not exist");
 				}
+			} else {
+				throw new OpenViduException(Code.SIGNAL_TO_INVALID_ERROR_CODE,
+						"Signal \"to\" field invalid format: some connectionId does not exist in this session");
 			}
 		}
 
-		rpcNotificationService.sendResponse(participant.getParticipantPrivateId(), transactionId, new JsonObject());
+		if (isRpcCall) {
+			rpcNotificationService.sendResponse(participant.getParticipantPrivateId(), transactionId, new JsonObject());
+		}
 	}
 
 	public void onStreamPropertyChanged(Participant participant, Integer transactionId, Set<Participant> participants,
@@ -526,14 +541,18 @@ public class SessionEventsHandler {
 		}
 	}
 
-	public void onFilterEventDispatched(String connectionId, String streamId, String filterType, String eventType,
-			Object data, Set<Participant> participants, Set<String> subscribedParticipants) {
+	public void onFilterEventDispatched(String sessionId, String connectionId, String streamId, String filterType,
+			GenericMediaEvent event, Set<Participant> participants, Set<String> subscribedParticipants) {
+
+		CDR.recordFilterEventDispatched(sessionId, connectionId, streamId, filterType, event);
+
 		JsonObject params = new JsonObject();
 		params.addProperty(ProtocolElements.FILTEREVENTLISTENER_CONNECTIONID_PARAM, connectionId);
 		params.addProperty(ProtocolElements.FILTEREVENTLISTENER_STREAMID_PARAM, streamId);
 		params.addProperty(ProtocolElements.FILTEREVENTLISTENER_FILTERTYPE_PARAM, filterType);
-		params.addProperty(ProtocolElements.FILTEREVENTLISTENER_EVENTTYPE_PARAM, eventType);
-		params.addProperty(ProtocolElements.FILTEREVENTLISTENER_DATA_PARAM, data.toString());
+		params.addProperty(ProtocolElements.FILTEREVENTLISTENER_EVENTTYPE_PARAM, event.getType());
+		params.addProperty(ProtocolElements.FILTEREVENTLISTENER_DATA_PARAM, event.getData().toString());
+
 		for (Participant p : participants) {
 			if (subscribedParticipants.contains(p.getParticipantPublicId())) {
 				rpcNotificationService.sendNotification(p.getParticipantPrivateId(),

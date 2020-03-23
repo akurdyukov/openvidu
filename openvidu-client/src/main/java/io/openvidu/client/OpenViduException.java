@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,7 +46,6 @@ public class OpenViduException extends JsonRpcErrorException {
 		USER_METADATA_FORMAT_INVALID_ERROR_CODE(500),
 
 		SIGNAL_FORMAT_INVALID_ERROR_CODE(600), SIGNAL_TO_INVALID_ERROR_CODE(601),
-		SIGNAL_MESSAGE_INVALID_ERROR_CODE(602),
 
 		DOCKER_NOT_FOUND(709), RECORDING_PATH_NOT_VALID(708), RECORDING_FILE_EMPTY_ERROR(707),
 		RECORDING_DELETE_ERROR_CODE(706), RECORDING_LIST_ERROR_CODE(705), RECORDING_STOP_ERROR_CODE(704),

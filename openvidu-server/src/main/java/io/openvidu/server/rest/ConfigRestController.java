@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ public class ConfigRestController {
 	private static final Logger log = LoggerFactory.getLogger(ConfigRestController.class);
 
 	@Autowired
-	protected OpenviduConfig openviduConfig;
+	private OpenviduConfig openviduConfig;
 
 	@RequestMapping(value = "/openvidu-version", method = RequestMethod.GET)
 	public String getOpenViduServerVersion() {
@@ -97,6 +97,9 @@ public class ConfigRestController {
 
 		JsonObject json = new JsonObject();
 		json.addProperty("version", openviduConfig.getVersion());
+		JsonArray kmsUris = new JsonArray();
+		openviduConfig.getKmsUris().forEach(uri -> kmsUris.add(uri));
+		json.add("kmsUris", kmsUris);
 		json.addProperty("openviduPublicurl", openviduConfig.getOpenViduPublicUrl());
 		json.addProperty("openviduCdr", openviduConfig.isCdrEnabled());
 		json.addProperty("maxRecvBandwidth", openviduConfig.getVideoMaxRecvBandwidth());
@@ -108,9 +111,13 @@ public class ConfigRestController {
 			json.addProperty("openviduRecordingVersion", openviduConfig.getOpenViduRecordingVersion());
 			json.addProperty("openviduRecordingPath", openviduConfig.getOpenViduRecordingPath());
 			json.addProperty("openviduRecordingPublicAccess", openviduConfig.getOpenViduRecordingPublicAccess());
-			json.addProperty("openviduRecordingNotification", openviduConfig.getOpenViduRecordingNotification());
+			json.addProperty("openviduRecordingNotification", openviduConfig.getOpenViduRecordingNotification().name());
 			json.addProperty("openviduRecordingCustomLayout", openviduConfig.getOpenviduRecordingCustomLayout());
 			json.addProperty("openviduRecordingAutostopTimeout", openviduConfig.getOpenviduRecordingAutostopTimeout());
+			if (openviduConfig.getOpenViduRecordingComposedUrl() != null
+					&& !openviduConfig.getOpenViduRecordingComposedUrl().isEmpty()) {
+				json.addProperty("openviduRecordingComposedUrl", openviduConfig.getOpenViduRecordingComposedUrl());
+			}
 		}
 		json.addProperty("openviduWebhook", openviduConfig.isWebhookEnabled());
 		if (openviduConfig.isWebhookEnabled()) {

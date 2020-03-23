@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ public class SessionProperties {
 
 		/**
 		 * Call this method to set how the media streams will be sent and received by
-		 * your clients: routed through OpenVidu Media Server
+		 * your clients: routed through OpenVidu Media Node
 		 * (<code>MediaMode.ROUTED</code>) or attempting direct p2p connections
 		 * (<code>MediaMode.RELAYED</code>, <i>not available yet</i>)
 		 * 
@@ -159,7 +159,7 @@ public class SessionProperties {
 
 	/**
 	 * Defines how the media streams will be sent and received by your clients:
-	 * routed through OpenVidu Media Server (<code>MediaMode.ROUTED</code>) or
+	 * routed through OpenVidu Media Node (<code>MediaMode.ROUTED</code>) or
 	 * attempting direct p2p connections (<code>MediaMode.RELAYED</code>, <i>not
 	 * available yet</i>)
 	 */

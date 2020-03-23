@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,12 +17,18 @@
 
 package io.openvidu.server.utils;
 
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.IOException;
 import java.util.Map.Entry;
 
 import org.kurento.jsonrpc.Props;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
+import com.google.gson.JsonParser;
 
 public class JsonUtils {
 
@@ -36,6 +42,39 @@ public class JsonUtils {
 			}
 		}
 		return props;
+	}
+
+	public JsonObject fromFileToJsonObject(String filePath)
+			throws IOException, FileNotFoundException, JsonParseException, IllegalStateException {
+		return this.fromFileToJsonElement(filePath).getAsJsonObject();
+	}
+
+	public JsonArray fromFileToJsonArray(String filePath)
+			throws IOException, FileNotFoundException, JsonParseException, IllegalStateException {
+		return this.fromFileToJsonElement(filePath).getAsJsonArray();
+	}
+
+	public JsonElement fromFileToJsonElement(String filePath)
+			throws IOException, FileNotFoundException, JsonParseException, IllegalStateException {
+		JsonElement json = null;
+		FileReader reader = null;
+		try {
+			reader = new FileReader(filePath);
+		} catch (FileNotFoundException e) {
+			throw e;
+		}
+		try {
+			json = JsonParser.parseReader(reader);
+		} catch (JsonParseException | IllegalStateException exception) {
+			throw exception;
+		} finally {
+			try {
+				reader.close();
+			} catch (IOException e) {
+				throw e;
+			}
+		}
+		return json;
 	}
 
 }

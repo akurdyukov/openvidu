@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -51,6 +51,7 @@ public class ChromeUser extends BrowserUser {
 		options.setUnhandledPromptBehaviour(UnexpectedAlertBehaviour.IGNORE);
 
 		options.addArguments("--disable-infobars");
+		options.setExperimentalOption("excludeSwitches", new String[]{"enable-automation"}); 
 
 		Map<String, Object> prefs = new HashMap<String, Object>();
 		prefs.put("profile.default_content_setting_values.media_stream_mic", 1);

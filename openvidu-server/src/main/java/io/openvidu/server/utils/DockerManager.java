@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,11 +38,8 @@ import com.github.dockerjava.api.exception.InternalServerErrorException;
 import com.github.dockerjava.api.exception.NotFoundException;
 import com.github.dockerjava.api.model.Bind;
 import com.github.dockerjava.api.model.Container;
-import com.github.dockerjava.api.model.ExposedPort;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
-import com.github.dockerjava.api.model.Ports;
-import com.github.dockerjava.api.model.Ports.Binding;
 import com.github.dockerjava.api.model.Volume;
 import com.github.dockerjava.core.DefaultDockerClientConfig;
 import com.github.dockerjava.core.DockerClientBuilder;
@@ -97,51 +94,29 @@ public class DockerManager {
 		return imageExists;
 	}
 
-	public void checkDockerEnabled(String springProfile) throws OpenViduException {
+	public void checkDockerEnabled() throws OpenViduException {
 		try {
 			this.dockerImageExistsLocally("hello-world");
 			log.info("Docker is installed and enabled");
 		} catch (ProcessingException exception) {
-			String message = "Exception connecting to Docker daemon: ";
-			if ("docker".equals(springProfile)) {
-				final String NEW_LINE = System.getProperty("line.separator");
-				message += "make sure you include the following flags in your \"docker run\" command:" + NEW_LINE
-						+ "    -e openvidu.recording.path=/YOUR/PATH/TO/VIDEO/FILES" + NEW_LINE
-						+ "    -e MY_UID=$(id -u $USER)" + NEW_LINE + "    -v /var/run/docker.sock:/var/run/docker.sock"
-						+ NEW_LINE + "    -v /YOUR/PATH/TO/VIDEO/FILES:/YOUR/PATH/TO/VIDEO/FILES" + NEW_LINE;
-			} else {
-				message += "you need Docker CE installed in this machine to enable OpenVidu recording service. "
-						+ "If Docker CE is already installed, make sure to add OpenVidu Server user to "
-						+ "\"docker\" group: " + System.lineSeparator() + "   1) $ sudo usermod -aG docker $USER"
-						+ System.lineSeparator()
-						+ "   2) Log out and log back to the host to reevaluate group membership";
-			}
-			log.error(message);
-			throw new OpenViduException(Code.DOCKER_NOT_FOUND, message);
+			throw new OpenViduException(Code.DOCKER_NOT_FOUND, "Exception connecting to Docker daemon");
 		}
 	}
 
 	public String runContainer(String container, String containerName, List<Volume> volumes, List<Bind> binds,
-			List<Integer> exposedPorts, String networkMode, List<String> envs) throws Exception {
+			String networkMode, List<String> envs) throws Exception {
 
-		CreateContainerCmd cmd = dockerClient.createContainerCmd(container).withName(containerName).withEnv(envs);
+		CreateContainerCmd cmd = dockerClient.createContainerCmd(container).withEnv(envs);
+		if (containerName != null) {
+			cmd.withName(containerName);
+		}
+
 		HostConfig hostConfig = new HostConfig().withNetworkMode(networkMode);
 		if (volumes != null) {
 			cmd.withVolumes(volumes);
 		}
 		if (binds != null) {
 			hostConfig.withBinds(binds);
-		}
-		if (exposedPorts != null) {
-			Ports ps = new Ports();
-			List<ExposedPort> expPorts = new ArrayList<>();
-			exposedPorts.forEach(p -> {
-				ExposedPort port = ExposedPort.tcp(p);
-				expPorts.add(port);
-				ps.bind(port, Binding.bindPort(p));
-			});
-			hostConfig.withPortBindings(ps);
-			cmd.withExposedPorts(expPorts);
 		}
 
 		cmd.withHostConfig(hostConfig);
@@ -165,10 +140,6 @@ public class DockerManager {
 
 	public void removeDockerContainer(String containerId, boolean force) {
 		dockerClient.removeContainerCmd(containerId).withForce(force).exec();
-	}
-
-	public void stopDockerContainer(String containerId) {
-		dockerClient.stopContainerCmd(containerId).exec();
 	}
 
 	public void cleanStrandedContainers(String imageName) {
@@ -213,7 +184,28 @@ public class DockerManager {
 		}
 	}
 
-	static public String getDokerGatewayIp() {
+	public String getContainerIp(String containerId) {
+		try {
+			return CommandExecutor.execCommand("/bin/sh", "-c",
+					"docker inspect -f \"{{ .NetworkSettings.IPAddress }}\" " + containerId);
+		} catch (IOException | InterruptedException e) {
+			log.error(e.getMessage());
+			return null;
+		}
+	}
+
+	public List<String> getRunningContainers(String fullImageName) {
+		List<String> containerIds = new ArrayList<>();
+		List<Container> existingContainers = this.dockerClient.listContainersCmd().exec();
+		for (Container container : existingContainers) {
+			if (container.getImage().startsWith(fullImageName)) {
+				containerIds.add(container.getId());
+			}
+		}
+		return containerIds;
+	}
+
+	static public String getDockerGatewayIp() {
 		try {
 			return CommandExecutor.execCommand("/bin/sh", "-c",
 					"docker network inspect bridge --format='{{(index .IPAM.Config 0).Gateway}}'");

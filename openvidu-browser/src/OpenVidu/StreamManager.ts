@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,10 +31,17 @@ import log = require('loglevel');
  * Interface in charge of displaying the media streams in the HTML DOM. This wraps any [[Publisher]] and [[Subscriber]] object.
  * You can insert as many video players fo the same Stream as you want by calling [[StreamManager.addVideoElement]] or
  * [[StreamManager.createVideoElement]].
- *
  * The use of StreamManager wrapper is particularly useful when you don't need to differentiate between Publisher or Subscriber streams or just
  * want to directly manage your own video elements (even more than one video element per Stream). This scenario is pretty common in
  * declarative, MVC frontend frameworks such as Angular, React or Vue.js
+ * 
+ * ### Available event listeners (and events dispatched)
+ * 
+ * - videoElementCreated ([[VideoElementEvent]])
+ * - videoElementDestroyed ([[VideoElementEvent]])
+ * - streamPlaying ([[StreamManagerEvent]])
+ * - streamAudioVolumeChange ([[StreamManagerEvent]])
+ * 
  */
 export class StreamManager implements EventDispatcher {
 
@@ -173,7 +180,7 @@ export class StreamManager implements EventDispatcher {
             }
         }
         if (type === 'streamAudioVolumeChange' && this.stream.hasAudio) {
-            this.stream.enableVolumeChangeEvent();
+            this.stream.enableVolumeChangeEvent(false);
         }
         return this;
     }
@@ -184,9 +191,9 @@ export class StreamManager implements EventDispatcher {
     once(type: string, handler: (event: Event) => void): StreamManager {
         this.ee.once(type, event => {
             if (event) {
-                console.info("Event '" + type + "' triggered once", event);
+                console.info("Event '" + type + "' triggered once by '" + (this.remote ? 'Subscriber' : 'Publisher') + "'", event);
             } else {
-                console.info("Event '" + type + "' triggered once");
+                console.info("Event '" + type + "' triggered once by '" + (this.remote ? 'Subscriber' : 'Publisher') + "'");
             }
             handler(event);
         });
@@ -206,7 +213,7 @@ export class StreamManager implements EventDispatcher {
             }
         }
         if (type === 'streamAudioVolumeChange' && this.stream.hasAudio) {
-            this.stream.enableOnceVolumeChangeEvent();
+            this.stream.enableOnceVolumeChangeEvent(false);
         }
         return this;
     }
@@ -222,7 +229,10 @@ export class StreamManager implements EventDispatcher {
         }
 
         if (type === 'streamAudioVolumeChange') {
-            this.stream.disableVolumeChangeEvent();
+            let remainingVolumeEventListeners = this.ee.getListeners(type).length;
+            if (remainingVolumeEventListeners === 0) {
+                this.stream.disableVolumeChangeEvent(false);
+            }
         }
 
         return this;
@@ -347,6 +357,33 @@ export class StreamManager implements EventDispatcher {
     }
 
     /**
+     * Updates the current configuration for the [[PublisherSpeakingEvent]] feature and the [StreamManagerEvent.streamAudioVolumeChange](/api/openvidu-browser/classes/streammanagerevent.html) feature for this specific
+     * StreamManager audio stream, overriding the global options set with [[OpenVidu.setAdvancedConfiguration]]. This way you can customize the audio events options
+     * for each specific StreamManager and change them dynamically.
+     * 
+     * @param publisherSpeakingEventsOptions New options to be applied to this StreamManager's audio stream. It is an object which includes the following optional properties:
+     * - `interval`: (number) how frequently the analyser polls the audio stream to check if speaking has started/stopped or audio volume has changed. Default **100** (ms)
+     * - `threshold`: (number) the volume at which _publisherStartSpeaking_, _publisherStopSpeaking_ events will be fired. Default **-50** (dB)
+     */
+    updatePublisherSpeakingEventsOptions(publisherSpeakingEventsOptions): void {
+        const currentHarkOptions = !!this.stream.harkOptions ? this.stream.harkOptions : (this.stream.session.openvidu.advancedConfiguration.publisherSpeakingEventsOptions || {});
+        const newInterval = (typeof publisherSpeakingEventsOptions.interval === 'number') ?
+            publisherSpeakingEventsOptions.interval : ((typeof currentHarkOptions.interval === 'number') ? currentHarkOptions.interval : 100);
+        const newThreshold = (typeof publisherSpeakingEventsOptions.threshold === 'number') ?
+            publisherSpeakingEventsOptions.threshold : ((typeof currentHarkOptions.threshold === 'number') ? currentHarkOptions.threshold : -50);
+        this.stream.harkOptions = {
+            interval: newInterval,
+            threshold: newThreshold
+        };
+        if (!!this.stream.speechEvent) {
+            this.stream.speechEvent.setInterval(newInterval);
+            this.stream.speechEvent.setThreshold(newThreshold);
+        }
+    }
+
+    /* Hidden methods */
+
+    /**
      * @hidden
      */
     initializeVideoProperties(video: HTMLVideoElement): void {
@@ -460,6 +497,8 @@ export class StreamManager implements EventDispatcher {
     emitEvent(type: string, eventArray: any[]): void {
         this.ee.emitEvent(type, eventArray);
     }
+
+    /* Private methods */
 
     private pushNewStreamManagerVideo(streamManagerVideo: StreamManagerVideo) {
         this.videos.push(streamManagerVideo);

@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,6 +17,8 @@
 
 package io.openvidu.server.kurento.core;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -34,6 +36,7 @@ import io.openvidu.client.OpenViduException.Code;
 import io.openvidu.client.internal.ProtocolElements;
 import io.openvidu.java.client.OpenViduRole;
 import io.openvidu.server.core.EndReason;
+import io.openvidu.server.core.MediaOptions;
 import io.openvidu.server.core.Participant;
 import io.openvidu.server.core.Session;
 import io.openvidu.server.kurento.kms.Kms;
@@ -54,19 +57,15 @@ public class KurentoSession extends Session {
 	private KurentoSessionEventsHandler kurentoSessionHandler;
 	private KurentoParticipantEndpointConfig kurentoEndpointConfig;
 
-	private final ConcurrentHashMap<String, String> filterStates = new ConcurrentHashMap<>();
-
 	private Object pipelineCreateLock = new Object();
 	private Object pipelineReleaseLock = new Object();
-	private boolean destroyKurentoClient;
 
 	public final ConcurrentHashMap<String, String> publishedStreamIds = new ConcurrentHashMap<>();
 
 	public KurentoSession(Session sessionNotActive, Kms kms, KurentoSessionEventsHandler kurentoSessionHandler,
-			KurentoParticipantEndpointConfig kurentoEndpointConfig, boolean destroyKurentoClient) {
+			KurentoParticipantEndpointConfig kurentoEndpointConfig) {
 		super(sessionNotActive);
 		this.kms = kms;
-		this.destroyKurentoClient = destroyKurentoClient;
 		this.kurentoSessionHandler = kurentoSessionHandler;
 		this.kurentoEndpointConfig = kurentoEndpointConfig;
 		log.debug("New SESSION instance with id '{}'", sessionId);
@@ -80,11 +79,6 @@ public class KurentoSession extends Session {
 		KurentoParticipant kurentoParticipant = new KurentoParticipant(participant, this, this.kurentoEndpointConfig,
 				this.openviduConfig, this.recordingManager);
 		participants.put(participant.getParticipantPrivateId(), kurentoParticipant);
-
-		filterStates.forEach((filterId, state) -> {
-			log.info("Adding filter {}", filterId);
-			kurentoSessionHandler.updateFilter(sessionId, participant, filterId, state);
-		});
 
 		log.info("SESSION {}: Added participant {}", sessionId, participant);
 
@@ -114,7 +108,7 @@ public class KurentoSession extends Session {
 			if (participant.equals(subscriber)) {
 				continue;
 			}
-			((KurentoParticipant) subscriber).cancelReceivingMedia(participant.getParticipantPublicId(), reason);
+			((KurentoParticipant) subscriber).cancelReceivingMedia((KurentoParticipant) participant, reason, false);
 		}
 
 		log.debug("SESSION {}: Unsubscribed other participants {} from the publisher {}", sessionId,
@@ -144,6 +138,8 @@ public class KurentoSession extends Session {
 	public boolean close(EndReason reason) {
 		if (!closed) {
 
+			this.tokens.clear();
+
 			for (Participant participant : participants.values()) {
 				((KurentoParticipant) participant).releaseAllFilters();
 				((KurentoParticipant) participant).close(reason, true, 0);
@@ -155,10 +151,6 @@ public class KurentoSession extends Session {
 
 			log.debug("Session {} closed", this.sessionId);
 
-			if (destroyKurentoClient) {
-				kms.getKurentoClient().destroy();
-			}
-
 			// Also disassociate the KurentoSession from the Kms
 			kms.removeKurentoSession(this.sessionId);
 
@@ -168,6 +160,11 @@ public class KurentoSession extends Session {
 			log.warn("Closing an already closed session '{}'", this.sessionId);
 			return false;
 		}
+	}
+
+	@Override
+	public String getMediaNodeId() {
+		return this.kms.getId();
 	}
 
 	public void sendIceCandidate(String participantPrivateId, String senderPublicId, String endpointName,
@@ -184,12 +181,13 @@ public class KurentoSession extends Session {
 
 		checkClosed();
 
-		participants.remove(participant.getParticipantPrivateId());
+		KurentoParticipant removedParticipant = (KurentoParticipant) participants
+				.remove(participant.getParticipantPrivateId());
 
 		log.debug("SESSION {}: Cancel receiving media from participant '{}' for other participant", this.sessionId,
 				participant.getParticipantPublicId());
 		for (Participant other : participants.values()) {
-			((KurentoParticipant) other).cancelReceivingMedia(participant.getParticipantPublicId(), reason);
+			((KurentoParticipant) other).cancelReceivingMedia(removedParticipant, reason, false);
 		}
 	}
 
@@ -293,17 +291,24 @@ public class KurentoSession extends Session {
 
 	public void restartStatusInKurento(long kmsDisconnectionTime) {
 
-		log.info("Reseting process: reseting remote media objects for active session {}", this.sessionId);
+		log.info("Resetting process: resetting remote media objects for active session {}", this.sessionId);
 
 		// Stop recording if session is being recorded
 		if (recordingManager.sessionIsBeingRecorded(this.sessionId)) {
 			this.recordingManager.forceStopRecording(this, EndReason.mediaServerDisconnect, kmsDisconnectionTime);
 		}
 
+		// Store MediaOptions for resetting PublisherEndpoints later
+		Map<String, MediaOptions> mediaOptionsMap = new HashMap<>();
+
 		// Close all MediaEndpoints of participants
 		this.getParticipants().forEach(p -> {
 			KurentoParticipant kParticipant = (KurentoParticipant) p;
 			final boolean wasStreaming = kParticipant.isStreaming();
+			if (wasStreaming) {
+				mediaOptionsMap.put(kParticipant.getParticipantPublicId(),
+						kParticipant.getPublisher().getMediaOptions());
+			}
 			kParticipant.releaseAllFilters();
 			kParticipant.close(EndReason.mediaServerDisconnect, false, kmsDisconnectionTime);
 			if (wasStreaming) {
@@ -314,21 +319,23 @@ public class KurentoSession extends Session {
 
 		// Release pipeline, create a new one and prepare new PublisherEndpoints for
 		// allowed users
-		log.info("Reseting process: closing media pipeline for active session {}", this.sessionId);
+		log.info("Resetting process: closing media pipeline for active session {}", this.sessionId);
 		this.closePipeline(() -> {
-			log.info("Reseting process: media pipeline closed for active session {}", this.sessionId);
+			log.info("Resetting process: media pipeline closed for active session {}", this.sessionId);
 			createPipeline();
 			try {
 				if (!pipelineLatch.await(20, TimeUnit.SECONDS)) {
-					throw new Exception("MediaPipleine was not created in 20 seconds");
+					throw new Exception("MediaPipeline was not created in 20 seconds");
 				}
 				getParticipants().forEach(p -> {
 					if (!OpenViduRole.SUBSCRIBER.equals(p.getToken().getRole())) {
-						((KurentoParticipant) p).resetPublisherEndpoint();
+
+						((KurentoParticipant) p).resetPublisherEndpoint(mediaOptionsMap.get(p.getParticipantPublicId()),
+								null);
 					}
 				});
 				log.info(
-						"Reseting process: media pipeline created and publisher endpoints reseted for active session {}",
+						"Resetting process: media pipeline created and publisher endpoints reseted for active session {}",
 						this.sessionId);
 			} catch (Exception e) {
 				log.error("Error waiting to new MediaPipeline on KurentoSession restart: {}", e.getMessage());

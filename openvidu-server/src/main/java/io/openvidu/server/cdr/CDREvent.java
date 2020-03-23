@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -45,7 +45,9 @@ public class CDREvent {
 
 	public JsonObject toJson() {
 		JsonObject json = new JsonObject();
-		json.addProperty("sessionId", this.sessionId);
+		if (sessionId != null) {
+			json.addProperty("sessionId", this.sessionId);
+		}
 		json.addProperty("timestamp", this.timeStamp);
 		return json;
 	}

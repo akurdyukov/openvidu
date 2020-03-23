@@ -1,5 +1,5 @@
 /*
- * (C) Copyright 2017-2019 OpenVidu (https://openvidu.io/)
+ * (C) Copyright 2017-2020 OpenVidu (https://openvidu.io)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public class KmsEvent {
 		json.remove("tags");
 		json.remove("timestampMillis");
 		json.addProperty("timestamp", timestamp);
-		json.addProperty("session", participant.getSessionId());
+		json.addProperty("sessionId", participant.getSessionId());
 		json.addProperty("user", participant.getFinalUserId());
 		json.addProperty("connection", participant.getParticipantPublicId());
 		json.addProperty("endpoint", this.endpoint);
