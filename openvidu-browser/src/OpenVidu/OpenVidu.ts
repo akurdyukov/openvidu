@@ -34,6 +34,7 @@ import RpcBuilder = require('../OpenViduInternal/KurentoUtils/kurento-jsonrpc');
 import platform = require('platform');
 platform['isIonicIos'] = (platform.product === 'iPhone' || platform.product === 'iPad') && platform.ua!!.indexOf('Safari') === -1;
 platform['isIonicAndroid'] = platform.os!!.family === 'Android' && platform.name == "Android Browser";
+import log = require('loglevel');
 
 /**
  * @hidden
@@ -99,13 +100,18 @@ export class OpenVidu {
   /**
    * @hidden
    */
-  ee = new EventEmitter()
+  ee = new EventEmitter();
+  /**
+   * @hidden
+   */
+  logger: log.Logger;
 
-  constructor() {
+  constructor(logger: log.Logger | null = null) {
+    this.logger = logger ?? log.getLogger("OpenVidu");
     this.libraryVersion = packageJson.version;
 
-    console.info("'OpenVidu' initialized");
-    console.info("openvidu-browser version: " + this.libraryVersion);
+    this.logger.info("'OpenVidu' initialized");
+    this.logger.info("openvidu-browser version: " + this.libraryVersion);
 
     if (platform.os!!.family === 'iOS' || platform.os!!.family === 'Android') {
       // Listen to orientationchange only on mobile devices
@@ -184,7 +190,7 @@ export class OpenVidu {
    * Returns new session
    */
   initSession(): Session {
-    this.session = new Session(this);
+    this.session = new Session(this, this.logger);
     return this.session;
   }
 
@@ -248,7 +254,7 @@ export class OpenVidu {
       };
     }
 
-    const publisher: Publisher = new Publisher(targetElement, properties, this);
+    const publisher: Publisher = new Publisher(targetElement, properties, this, this.logger);
 
     let completionHandler: (error: Error | undefined) => void;
     if (!!param2 && (typeof param2 === 'function')) {
@@ -783,7 +789,7 @@ export class OpenVidu {
       callback = params;
       params = {};
     }
-    console.debug('Sending request: {method:"' + method + '", params: ' + JSON.stringify(params) + '}');
+    this.logger.debug('Sending request: {method:"%s", params: %s}', method, JSON.stringify(params));
     this.jsonRpcClient.send(method, params, callback);
   }
 

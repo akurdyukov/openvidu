@@ -21,6 +21,7 @@ import { ConnectionOptions } from '../OpenViduInternal/Interfaces/Private/Connec
 import { InboundStreamOptions } from '../OpenViduInternal/Interfaces/Private/InboundStreamOptions';
 import { StreamOptionsServer } from '../OpenViduInternal/Interfaces/Private/StreamOptionsServer';
 
+import log = require('loglevel');
 
 /**
  * Represents each one of the user's connection to the session (the local one and other user's connections).
@@ -67,11 +68,16 @@ export class Connection {
     /**
      * @hidden
      */
-    constructor(private session: Session, opts?: ConnectionOptions) {
-        let msg = "'Connection' created ";
+    private logger: log.Logger;
+
+    /**
+     * @hidden
+     */
+    constructor(private session: Session, logger: log.Logger, opts?: ConnectionOptions) {
+        this.logger = logger;
         if (!!opts) {
             // Connection is remote
-            msg += "(remote) with 'connectionId' [" + opts.id + ']';
+            this.logger.debug("Remote connection with connectionId [" + opts.id + "] created");
             this.options = opts;
             this.connectionId = opts.id;
             this.creationTime = opts.createdAt;
@@ -83,9 +89,8 @@ export class Connection {
             }
         } else {
             // Connection is local
-            msg += '(local)';
+            this.logger.info("Local connection created");
         }
-        console.info(msg);
     }
 
 
@@ -133,7 +138,7 @@ export class Connection {
                 videoDimensions: !!opts.videoDimensions ? JSON.parse(opts.videoDimensions) : undefined,
                 filter: !!opts.filter ? opts.filter : undefined
             };
-            const stream = new Stream(this.session, streamOptions);
+            const stream = new Stream(this.session, this.logger, streamOptions);
 
             this.addStream(stream);
         });

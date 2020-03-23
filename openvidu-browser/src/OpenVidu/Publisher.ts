@@ -29,6 +29,7 @@ import { OpenViduError, OpenViduErrorName } from '../OpenViduInternal/Enums/Open
 import { VideoInsertMode } from '../OpenViduInternal/Enums/VideoInsertMode';
 
 import platform = require('platform');
+import log = require('loglevel');
 
 /**
  * Packs local media streams. Participants can publish it to a session. Initialized with [[OpenVidu.initPublisher]] method
@@ -74,8 +75,9 @@ export class Publisher extends StreamManager {
     /**
      * @hidden
      */
-    constructor(targEl: string | HTMLElement, properties: PublisherProperties, openvidu: OpenVidu) {
-        super(new Stream((!!openvidu.session) ? openvidu.session : new Session(openvidu), { publisherProperties: properties, mediaConstraints: {} }), targEl);
+    constructor(targEl: string | HTMLElement, properties: PublisherProperties, openvidu: OpenVidu, logger: log.Logger) {
+        super(new Stream((!!openvidu.session) ? openvidu.session : new Session(openvidu, logger), logger, { publisherProperties: properties, mediaConstraints: {} }), 
+            logger, targEl);
         this.properties = properties;
         this.openvidu = openvidu;
 

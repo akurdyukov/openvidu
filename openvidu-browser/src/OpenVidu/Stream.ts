@@ -34,6 +34,7 @@ import { OpenViduError, OpenViduErrorName } from '../OpenViduInternal/Enums/Open
 import EventEmitter = require('wolfy87-eventemitter');
 import hark = require('hark');
 import platform = require('platform');
+import log = require('loglevel');
 
 
 /**
@@ -176,14 +177,18 @@ export class Stream implements EventDispatcher {
      * @hidden
      */
     volumeChangeEventEnabled = false;
+    /**
+     * @hidden
+     */
+    private logger: log.Logger;
 
 
     /**
      * @hidden
      */
-    constructor(session: Session, options: InboundStreamOptions | OutboundStreamOptions | {}) {
-
+    constructor(session: Session, logger: log.Logger, options: InboundStreamOptions | OutboundStreamOptions | {}) {
         this.session = session;
+        this.logger = logger;
 
         if (options.hasOwnProperty('id')) {
             // InboundStreamOptions: stream belongs to a Subscriber
@@ -233,7 +238,11 @@ export class Stream implements EventDispatcher {
 
         this.ee.on('mediastream-updated', () => {
             this.streamManager.updateMediaStream(this.mediaStream);
-            console.debug('Video srcObject [' + this.mediaStream + '] updated in stream [' + this.streamId + ']');
+            if (this.streamId) {
+                this.logger.debug("Video srcObject [%s] updated in subscriber stream [%s]", this.mediaStream.id, this.streamId);
+            } else {
+                this.logger.debug("Video srcObject [%s] updated in publisher stream", this.mediaStream.id);
+            }
         });
     }
 

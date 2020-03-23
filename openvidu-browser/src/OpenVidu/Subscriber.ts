@@ -19,6 +19,7 @@ import { Stream } from './Stream';
 import { StreamManager } from './StreamManager';
 import { SubscriberProperties } from '../OpenViduInternal/Interfaces/Public/SubscriberProperties';
 
+import log = require('loglevel');
 
 /**
  * Packs remote media streams. Participants automatically receive them when others publish their streams. Initialized with [[Session.subscribe]] method
@@ -33,8 +34,8 @@ export class Subscriber extends StreamManager {
     /**
      * @hidden
      */
-    constructor(stream: Stream, targEl: string | HTMLElement, properties: SubscriberProperties) {
-        super(stream, targEl);
+    constructor(stream: Stream, logger: log.Logger, targEl: string | HTMLElement, properties: SubscriberProperties) {
+        super(stream, logger, targEl);
         this.element = this.targetElement;
         this.stream = stream;
         this.properties = properties;
@@ -48,7 +49,11 @@ export class Subscriber extends StreamManager {
         this.stream.getMediaStream().getAudioTracks().forEach((track) => {
             track.enabled = value;
         });
-        console.info("'Subscriber' has " + (value ? 'subscribed to' : 'unsubscribed from') + ' its audio stream');
+        if (value) {
+            this.logger.info("'Subscriber' has subscribed to its audio stream");
+        } else {
+            this.logger.info("'Subscriber' has unsubscribed from its audio stream");
+        }
         return this;
     }
 
@@ -60,7 +65,11 @@ export class Subscriber extends StreamManager {
         this.stream.getMediaStream().getVideoTracks().forEach((track) => {
             track.enabled = value;
         });
-        console.info("'Subscriber' has " + (value ? 'subscribed to' : 'unsubscribed from') + ' its video stream');
+        if (value) {
+            this.logger.info("'Subscriber' has subscribed to its video stream");
+        } else {
+            this.logger.info("'Subscriber' has unsubscribed from its video stream");
+        }
         return this;
     }
 

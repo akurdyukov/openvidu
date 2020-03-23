@@ -42,6 +42,7 @@ import { VideoInsertMode } from '../OpenViduInternal/Enums/VideoInsertMode';
 
 import EventEmitter = require('wolfy87-eventemitter');
 import platform = require('platform');
+import log = require('loglevel');
 
 /**
  * Represents a video call. It can also be seen as a videoconference room where multiple users can connect.
@@ -103,12 +104,14 @@ export class Session implements EventDispatcher {
     speakingEventsEnabled = false;
 
     private ee = new EventEmitter();
+    private logger: log.Logger;
 
     /**
      * @hidden
      */
-    constructor(openvidu: OpenVidu) {
+    constructor(openvidu: OpenVidu, logger: log.Logger) {
         this.openvidu = openvidu;
+        this.logger = logger;
     }
 
     connect(token: string): Promise<any>;
@@ -142,6 +145,7 @@ export class Session implements EventDispatcher {
      *
      */
     connect(token: string, metadata?: any): Promise<any> {
+        this.logger.debug("Connecting to token " + token);
         return new Promise((resolve, reject) => {
 
             this.processToken(token);
@@ -154,6 +158,7 @@ export class Session implements EventDispatcher {
                     metadata: !!metadata ? this.stringClientMetadata(metadata) : ''
                 };
                 this.connectAux(token).then(() => {
+                    this.logger.debug("Connection to %s successful", token);
                     resolve();
                 }).catch(error => {
                     reject(error);
@@ -252,7 +257,7 @@ export class Session implements EventDispatcher {
                     completionHandler(error);
                 }
             });
-        const subscriber = new Subscriber(stream, targetElement, properties);
+        const subscriber = new Subscriber(stream, this.logger, targetElement, properties);
         if (!!subscriber.targetElement) {
             stream.streamManager.createVideoElement(subscriber.targetElement, <VideoInsertMode>properties.insertMode);
         }
@@ -650,8 +655,8 @@ export class Session implements EventDispatcher {
             .then(connection => {
                 console.warn('Connection ' + response.id + ' already exists in connections list');
             })
-            .catch(openViduError => {
-                const connection = new Connection(this, response);
+            .catch(() => {
+                const connection = new Connection(this, this.logger, response);
                 this.remoteConnections[response.id] = connection;
                 this.ee.emitEvent('connectionCreated', [new ConnectionEvent(false, this, 'connectionCreated', connection, '')]);
             });
@@ -691,6 +696,7 @@ export class Session implements EventDispatcher {
      * @hidden
      */
     onParticipantPublished(response: ConnectionOptions): void {
+        this.logger.debug("Participant published", response);
 
         const afterConnectionFound = (connection) => {
             this.remoteConnections[connection.connectionId] = connection;
@@ -701,6 +707,8 @@ export class Session implements EventDispatcher {
                 // already subscribed to certain stream in the callback of "joinRoom" method
 
                 this.ee.emitEvent('streamCreated', [new StreamEvent(false, this, 'streamCreated', connection.stream, '')]);
+            } else {
+                this.logger.debug("Stream " + connection.stream.streamId + " already existed, no streamCreated emitted");
             }
 
             this.remoteStreamsCreated[connection.stream.streamId] = true;
@@ -713,6 +721,8 @@ export class Session implements EventDispatcher {
             'Existing remote connections: ' + JSON.stringify(Object.keys(this.remoteConnections)))
 
             .then(con => {
+                this.logger.trace("Updating existing connection with id ", response.id);
+
                 // Update existing Connection
                 connection = con;
                 response.metadata = con.data;
@@ -721,8 +731,10 @@ export class Session implements EventDispatcher {
                 afterConnectionFound(connection);
             })
             .catch(openViduError => {
+                this.logger.trace("Creating new connection for id ", response.id);
+
                 // Create new Connection
-                connection = new Connection(this, response);
+                connection = new Connection(this, this.logger, response);
                 afterConnectionFound(connection);
             });
     }
@@ -866,7 +878,7 @@ export class Session implements EventDispatcher {
             candidate: msg.candidate,
             component: msg.component,
             foundation: msg.foundation,
-            ip: msg.ip,
+            ip: msg.ip, 
             port: msg.port,
             priority: msg.priority,
             protocol: msg.protocol,
@@ -1033,6 +1045,7 @@ export class Session implements EventDispatcher {
 
                     this.openvidu.sendRequest('joinRoom', joinParams, (error, response) => {
                         if (!!error) {
+                            this.logger.error("Error joining room", error);
                             reject(error);
                         } else {
 
@@ -1045,7 +1058,7 @@ export class Session implements EventDispatcher {
                             };
 
                             // Initialize local Connection object with values returned by openvidu-server
-                            this.connection = new Connection(this);
+                            this.connection = new Connection(this, this.logger);
                             this.connection.connectionId = response.id;
                             this.connection.creationTime = response.createdAt;
                             this.connection.data = response.metadata;
@@ -1058,7 +1071,7 @@ export class Session implements EventDispatcher {
                             };
                             const existingParticipants: ConnectionOptions[] = response.value;
                             existingParticipants.forEach(participant => {
-                                const connection = new Connection(this, participant);
+                                const connection = new Connection(this, this.logger, participant);
                                 this.remoteConnections[connection.connectionId] = connection;
                                 events.connections.push(connection);
                                 if (!!connection.stream) {
@@ -1071,11 +1084,13 @@ export class Session implements EventDispatcher {
                             this.ee.emitEvent('connectionCreated', [new ConnectionEvent(false, this, 'connectionCreated', this.connection, '')]);
 
                             // One 'connectionCreated' event for each existing connection in the session
+                            this.logger.debug("Broadcasting connectionCreated for %d connections", events.connections.length);
                             events.connections.forEach(connection => {
                                 this.ee.emitEvent('connectionCreated', [new ConnectionEvent(false, this, 'connectionCreated', connection, '')]);
                             });
 
                             // One 'streamCreated' event for each active stream in the session
+                            this.logger.debug("Broadcasting streamCreated for %d streams", events.streams.length);
                             events.streams.forEach(stream => {
                                 this.ee.emitEvent('streamCreated', [new StreamEvent(false, this, 'streamCreated', stream, '')]);
                             });
@@ -1183,7 +1198,7 @@ export class Session implements EventDispatcher {
                     { urls: [stunUrl] },
                     { urls: [turnUrl1, turnUrl2], username: turnUsername, credential: turnCredential }
                 ];
-                console.log('TURN temp credentials [' + turnUsername + ':' + turnCredential + ']');
+                this.logger.debug("TURN temp credentials [%s:%s]", turnUsername, turnCredential);
             }
             if (!!role) {
                 this.openvidu.role = role;
@@ -1192,7 +1207,7 @@ export class Session implements EventDispatcher {
                 this.openvidu.webrtcStatsInterval = +webrtcStatsInterval;
             }
             if (!!openviduServerVersion) {
-                console.info("openvidu-server version: " + openviduServerVersion);
+                this.logger.info("openvidu-server version: %s", openviduServerVersion);
                 if (openviduServerVersion !== this.openvidu.libraryVersion) {
                     console.error('OpenVidu Server (' + openviduServerVersion +
                         ') and OpenVidu Browser (' + this.openvidu.libraryVersion +

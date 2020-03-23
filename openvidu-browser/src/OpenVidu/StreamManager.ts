@@ -25,6 +25,7 @@ import { VideoInsertMode } from '../OpenViduInternal/Enums/VideoInsertMode';
 
 import EventEmitter = require('wolfy87-eventemitter');
 import platform = require('platform');
+import log = require('loglevel');
 
 /**
  * Interface in charge of displaying the media streams in the HTML DOM. This wraps any [[Publisher]] and [[Subscriber]] object.
@@ -88,15 +89,20 @@ export class StreamManager implements EventDispatcher {
      * @hidden
      */
     protected canPlayListener: EventListener;
+    /**
+     * @hidden
+     */
+    logger: log.Logger;
 
 
     /**
      * @hidden
      */
-    constructor(stream: Stream, targetElement?: HTMLElement | string) {
+    constructor(stream: Stream, logger: log.Logger, targetElement?: HTMLElement | string) {
         this.stream = stream;
         this.stream.streamManager = this;
         this.remote = !this.stream.isLocal();
+        this.logger = logger;
 
         if (!!targetElement) {
             let targEl;
@@ -124,14 +130,14 @@ export class StreamManager implements EventDispatcher {
         this.canPlayListener = () => {
             if (this.stream.isLocal()) {
                 if (!this.stream.displayMyRemote()) {
-                    console.info("Your local 'Stream' with id [" + this.stream.streamId + '] video is now playing');
+                    this.logger.info("Your local Stream video is now playing");
                     this.ee.emitEvent('videoPlaying', [new VideoElementEvent(this.videos[0].video, this, 'videoPlaying')]);
                 } else {
-                    console.info("Your own remote 'Stream' with id [" + this.stream.streamId + '] video is now playing');
+                    this.logger.info("Your own remote Stream with id [%s] video is now playing", this.stream.streamId);
                     this.ee.emitEvent('remoteVideoPlaying', [new VideoElementEvent(this.videos[0].video, this, 'remoteVideoPlaying')]);
                 }
             } else {
-                console.info("Remote 'Stream' with id [" + this.stream.streamId + '] video is now playing');
+                this.logger.info("Remote Stream with id [%s] video is now playing", this.stream.streamId);
                 this.ee.emitEvent('videoPlaying', [new VideoElementEvent(this.videos[0].video, this, 'videoPlaying')]);
             }
             this.ee.emitEvent('streamPlaying', [new StreamManagerEvent(this, 'streamPlaying', undefined)]);
@@ -269,7 +275,7 @@ export class StreamManager implements EventDispatcher {
             canplayListenerAdded: false
         });
 
-        console.info('New video element associated to ', this);
+        this.logger.info('New video element with id [%s] associated to %s', video.id, this);
 
         return returnNumber;
     }
